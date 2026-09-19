@@ -36,9 +36,10 @@ cmake --build build --parallel
 cd build && ctest --output-on-failure
 ```
 
-`ext/libriscv` is a submodule. Without it the build skips the tests that run
-generated code on a real RISC-V machine (`test_differential`, `test_profiling`,
-`test_instances` and the rest) and says so at configure time.
+`ext/libriscv`, `ext/doctest` and `ext/witness-cpp` are submodules. Without
+libriscv the build skips the tests that run generated code on a real RISC-V
+machine (`test_differential`, `test_profiling`, `test_instances` and the rest)
+and says so at configure time.
 
 Two options are worth knowing:
 
@@ -46,6 +47,44 @@ Two options are worth knowing:
 | --- | --- | --- |
 | `GDSCRIPT_BUILD_RISCV` | `ON` | `OFF` builds only the frontend and its IR, for a native backend |
 | `DOUBLE_PRECISION` | `OFF` | Match a Godot built with `real_t = double` |
+
+## Tests
+
+The suite is [doctest](https://github.com/doctest/doctest), and property tests
+are [witness-cpp](https://github.com/V-Sekai-fire/repository-witness-cpp). Every
+subject is covered three ways:
+
+| Kind | What it is | Where |
+| --- | --- | --- |
+| Unit | A named case with a written-down input and expected result | Throughout |
+| Property | `PROP_HOLDS`: a statement that has to hold for every program the generator can produce | `test_lexer`, `test_operators`, `test_strings`, `test_containers`, `test_dictionaries`, `test_ir_optimizer`, `test_opt_invariance`, `test_fuzz` |
+| Falsifiability | `PROP_FALSIFIABLE`: a statement that is false on purpose, which the same generator and ladder have to catch | Beside every property |
+
+The third is what keeps the second honest. A property tested with a generator
+that only reaches trivial programs passes while checking nothing; its
+falsifiability case fails in exactly that situation, because a generator that
+cannot reach a counterexample cannot find the planted one either. Both macros
+live in `src/gdscript/compiler/tests/property_support.h`.
+
+Running one binary, or one case:
+
+```bash
+./build/src/gdscript/compiler/test_operators
+./build/src/gdscript/compiler/test_operators -ts="*property*"
+./build/src/gdscript/compiler/test_operators --list-test-cases
+```
+
+doctest owns `argv`, so the fuzzing knobs are environment variables:
+
+| Variable | Effect |
+| --- | --- |
+| `GDSC_FUZZ_SEED`, `GDSC_FUZZ_COUNT` | Where `test_fuzz` starts and how far it goes |
+| `GDSC_DIFF_FUZZ`, `GDSC_DIFF_SEED`, `GDSC_DIFF_COUNT` | Turn on and steer `test_differential`'s generated programs, which are opt-in as they are upstream |
+| `GDSC_DIFF_FILE` | Run one program from a file through `test_differential` |
+| `PROPERTY_SEED` | The seed witness-cpp generates from |
+
+`tests/fuzz_nightly.sh build 30` runs both fuzzers for half an hour from a seed
+nobody has tried.
 
 ## API usage
 
