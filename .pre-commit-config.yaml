@@ -3,9 +3,9 @@ repos:
     rev: v22.1.5
     hooks:
       - id: clang-format
-        # Nothing under src/. Those files are copied from godot-sandbox and
-        # kept byte-identical to it, and they do not match the .clang-format
-        # they ship beside -- upstream does not run it over them either.
-        # Reformatting them would turn every sync from a copy into a merge.
-        files: \.(cpp|h)$
-        exclude: ^src/
+        # The test suite, which this repository owns and formats. The compiler
+        # sources beside it are copied from godot-sandbox and kept
+        # byte-identical to it; they do not match the .clang-format they ship
+        # with, and upstream does not run it over them either. Reformatting
+        # them would turn every sync from a copy into a merge.
+        files: ^src/gdscript/compiler/tests/.*\.(cpp|h)$
