@@ -103,10 +103,13 @@ target_link_libraries(gdscript_compiler_test gdscript_compiler)
 # The suite is doctest, and property tests are witness-cpp. Both are header
 # only and live in ext/ as submodules. gdscript_test_main carries doctest's
 # main() so the implementation is compiled once rather than in each of the 60
-# test binaries.
-add_library(gdscript_test_main STATIC tests/doctest_main.cpp)
-target_link_libraries(gdscript_test_main PUBLIC doctest::doctest witness::witness)
-target_include_directories(gdscript_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# test binaries. Guarded: a BUILD_TESTING=OFF build has neither submodule
+# target, because the root list file only adds them for a testing build.
+if (BUILD_TESTING)
+	add_library(gdscript_test_main STATIC tests/doctest_main.cpp)
+	target_link_libraries(gdscript_test_main PUBLIC doctest::doctest witness::witness)
+	target_include_directories(gdscript_test_main PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 function(add_gdscript_test test_name test_source)
 	add_executable(${test_name} ${test_source})
