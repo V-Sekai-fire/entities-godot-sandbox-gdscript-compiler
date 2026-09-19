@@ -1,0 +1,3 @@
+[submodule "ext/libriscv"]
+	path = ext/libriscv
+	url = https://github.com/fwsGonzo/libriscv.git

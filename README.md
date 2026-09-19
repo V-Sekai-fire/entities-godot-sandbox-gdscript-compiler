@@ -1,36 +1,53 @@
 # GDScript to RISC-V Compiler
 
-This is a complete GDScript compiler that compiles GDScript source code to RISC-V ELF binaries, executable in Godot Sandbox.
+A GDScript compiler that produces RISC-V ELF binaries, executable in Godot
+Sandbox. The sources are extracted from
+[libriscv/godot-sandbox](https://github.com/libriscv/godot-sandbox); see
+[UPSTREAM.md](UPSTREAM.md) for the commit this tracks and how to re-sync.
 
-## Source Files
+## Layout
 
-Located in `src/`:
+Upstream paths are kept, so the compiler lives at
+`src/gdscript/compiler/` and the syscall numbers it emits against at
+`src/syscalls.h`.
 
-### Core Compiler
-- **compiler.h/cpp** - Main compiler interface
-- **lexer.h/cpp** - Tokenizer for GDScript
-- **parser.h/cpp** - AST parser
-- **ast.h** - Abstract Syntax Tree definitions
-- **token.h/cpp** - Token definitions
+### Frontend
+- **lexer**, **token**, **parser**, **ast** — GDScript source to AST
+- **source_model**, **function_signature**, **property_signature**,
+  **traits**, **globals** — name resolution, signatures, trait conformance
+- **codegen** — AST to IR
+- **ir**, **ir_optimizer**, **ir_verifier**, **ir_interpreter** — IR, its
+  optimization passes, a verifier and an interpreter for differential testing
+- **c_codegen** — the C backend, with type inference, unboxing and a typed ABI
 
-### Code Generation Pipeline
-- **codegen.h/cpp** - AST to IR (Intermediate Representation)
-- **ir.h/cpp** - IR definitions
-- **ir_optimizer.h/cpp** - IR optimization passes
-- **ir_interpreter.h/cpp** - IR interpreter for debugging
-- **riscv_codegen.h/cpp** - IR to RISC-V machine code
-- **register_allocator.h/cpp** - Register allocation
+### RISC-V backend
+- **riscv_codegen**, **riscv_globals**, **riscv_profiling**, **riscv_debug** —
+  IR to RISC-V machine code
+- **register_allocator** — register allocation
+- **elf_builder** — RISC-V ELF binary output
+- **line_table**, **debug_layout**, **gdsmeta** — debug info and metadata
 
-### ELF Generation
-- **elf_builder.h/cpp** - RISC-V ELF binary builder
+## Building
 
-### Utilities
-- **compiler_exception.h/cpp** - Error handling
-- **variant_types.h** - GDScript Variant type definitions
-- **dump_ir.cpp** - Debug tool for IR inspection
-- **gdscript_to_riscv.cpp** - Debug tool for disassembly
+```bash
+git clone --recurse-submodules https://github.com/V-Sekai-fire/entities-godot-sandbox-gdscript-compiler
+cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build --parallel
+cd build && ctest --output-on-failure
+```
 
-## API Usage
+`ext/libriscv` is a submodule. Without it the build skips the tests that run
+generated code on a real RISC-V machine (`test_differential`, `test_profiling`,
+`test_instances` and the rest) and says so at configure time.
+
+Two options are worth knowing:
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `GDSCRIPT_BUILD_RISCV` | `ON` | `OFF` builds only the frontend and its IR, for a native backend |
+| `DOUBLE_PRECISION` | `OFF` | Match a Godot built with `real_t = double` |
+
+## API usage
 
 ```cpp
 #include <compiler.h>
@@ -55,16 +72,16 @@ if (elf_data.empty()) {
 }
 ```
 
-## Compiler Pipeline
+## Pipeline
 
-1. **Lexing**: GDScript source → Tokens
-2. **Parsing**: Tokens → AST
-3. **Code Generation**: AST → IR (Intermediate Representation)
+1. **Lexing**: GDScript source to tokens
+2. **Parsing**: tokens to AST
+3. **Code generation**: AST to IR
 4. **Optimization**: IR optimization passes
-5. **RISC-V Codegen**: IR → RISC-V machine code
-6. **ELF Building**: Machine code → Executable ELF binary
+5. **RISC-V codegen**: IR to RISC-V machine code
+6. **ELF building**: machine code to an executable ELF binary
 
-## Debug Tools
+## Debug tools
 
 ### dump_ir
 Inspect the IR generated from GDScript:
@@ -81,15 +98,6 @@ cat script.gd | ./gdscript_to_riscv
 cat script.gd | ./gdscript_to_riscv -f function_name
 ```
 
-## Features
-
-- Full GDScript syntax support (functions, variables, control flow)
-- Type hints support
-- IR-based optimization
-- Register allocation
-- RISC-V 64-bit code generation
-- ELF binary output compatible with Godot Sandbox
-
 ## License
 
-Same as the original godot-sandbox repository.
+BSD 3-Clause, as the original godot-sandbox repository. See [LICENSE](LICENSE).
