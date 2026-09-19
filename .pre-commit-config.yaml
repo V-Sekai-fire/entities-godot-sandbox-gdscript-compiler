@@ -1,6 +1,11 @@
 repos:
   - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v22.0.0
+    rev: v22.1.5
     hooks:
       - id: clang-format
-        files: ^src/(.*\.(cpp|h))$
+        # Nothing under src/. Those files are copied from godot-sandbox and
+        # kept byte-identical to it, and they do not match the .clang-format
+        # they ship beside -- upstream does not run it over them either.
+        # Reformatting them would turn every sync from a copy into a merge.
+        files: \.(cpp|h)$
+        exclude: ^src/
