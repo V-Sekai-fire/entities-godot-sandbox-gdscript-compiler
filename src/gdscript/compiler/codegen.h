@@ -42,9 +42,12 @@ public:
 	}
 
 	void set_native_classes(bool enabled) { m_native_classes = enabled; }
+	// Off: plain GDScript, where an untyped `var x = v` is a Variant that may change type.
+	void set_extensions(bool enabled) { m_extensions = enabled; }
 
 private:
 	bool m_native_classes = false;
+	bool m_extensions = true;
 	// Per-function state. Value type: lives on the stack for one function's
 	// lowering, so new fields are automatically fresh. Program-wide state
 	// (string constants, globals, label counter) stays on CodeGenerator.

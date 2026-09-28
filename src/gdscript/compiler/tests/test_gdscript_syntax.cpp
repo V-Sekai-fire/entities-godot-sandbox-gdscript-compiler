@@ -21,9 +21,10 @@ static Program parse(const std::string &source) {
 	return parser.parse();
 }
 
-static IRProgram compile_to_ir(const std::string &source) {
+static IRProgram compile_to_ir(const std::string &source, bool extensions = false) {
 	Program program = parse(source);
 	CodeGenerator codegen;
+	codegen.set_extensions(extensions);
 	IRProgram ir = codegen.generate(program);
 	ir_verify(ir);
 	return ir;
@@ -208,4 +209,19 @@ TEST_CASE("an expression statement is reported once") {
 	const SourceModel model = analyze_source("func f():\n\tvar c = 1\n\tc ++ 1\n\treturn c\n", "once.gd",
 											 ANALYZE_DIAGNOSTICS | ANALYZE_DECLARATIONS);
 	CHECK(count_code(model, "STANDALONE_EXPRESSION") == 1);
+}
+
+TEST_CASE("an untyped var is a Variant in GDScript and fixed in SafeGDScript") {
+	const std::string changes = "func f():\n\tvar x = 0\n\tx = 1.5\n\tx = \"s\"\n\treturn x\n";
+	CHECK_NOTHROW(compile_to_ir(changes));
+	CHECK_THROWS(compile_to_ir(changes, true));
+
+	const std::string inferred = "func f():\n\tvar x := 0\n\tx = \"s\"\n\treturn x\n";
+	CHECK_THROWS(compile_to_ir(inferred));
+}
+
+TEST_CASE("a float stored in an int variable is truncated in GDScript") {
+	const std::string narrowing = "func f(v: float) -> int:\n\tvar n: int = 0\n\tn = v\n\treturn n\n";
+	CHECK_NOTHROW(compile_to_ir(narrowing));
+	CHECK_THROWS(compile_to_ir(narrowing, true));
 }

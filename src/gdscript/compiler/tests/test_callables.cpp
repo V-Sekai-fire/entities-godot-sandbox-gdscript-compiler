@@ -44,6 +44,7 @@ const VariantLayout LAYOUT = native_variant_layout();
 std::vector<uint8_t> compile(const std::string &source) {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	std::vector<uint8_t> elf = compiler.compile(source, options);
 	if (elf.empty()) {
 		FAIL_CHECK("FAILED to compile: ", compiler.get_error());
@@ -54,6 +55,7 @@ std::vector<uint8_t> compile(const std::string &source) {
 std::string compile_error(const std::string &source) {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	if (!compiler.compile(source, options).empty()) {
 		return "";
 	}
@@ -63,6 +65,7 @@ std::string compile_error(const std::string &source) {
 std::string restricted_compile_error(const std::string &source) {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.restricted = true;
 	if (!compiler.compile(source, options).empty()) {
 		return "";
@@ -870,6 +873,7 @@ TEST_CASE("resolution order") {
 TEST_CASE("lifted names stay out of the way") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	const std::vector<uint8_t> elf = compiler.compile(
 			"func f():\n"
 			"\tvar a = func(): return 1\n"

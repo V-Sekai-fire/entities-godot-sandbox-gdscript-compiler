@@ -1094,8 +1094,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 
 	const bool untyped_null = accepted_type.empty() && stmt->initializer != nullptr &&
 		get_register_type(func, reg) == Variant::NIL;
+	const bool gdscript_variant = !m_extensions && accepted_type.empty() && stmt->initializer != nullptr &&
+		!stmt->inferred && !conditional_binding;
 
-	const bool declared_variant = accepted_type.single_name() == "Variant" || untyped_null;
+	const bool declared_variant = accepted_type.single_name() == "Variant" || untyped_null || gdscript_variant;
 	if (declared_variant) {
 		// Fresh register: clearing type on the initializer's would reach other uses.
 		int untyped_reg = alloc_register(func);
@@ -1310,6 +1312,13 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	} else if (var->is_variant) {
 		set_register_type(func, var->register_num, IRInstruction::TypeHint_NONE);
 	} else {
+		// GDScript truncates a float stored into an int variable instead of refusing it.
+		if (!m_extensions && get_register_type(func, var->register_num) == Variant::INT &&
+			get_register_type(func, value_reg) == Variant::FLOAT) {
+			const int truncated = gen_host_constructor_typed("int", Variant::INT, { value_reg }, func, nullptr);
+			free_register(func, value_reg);
+			value_reg = truncated;
+		}
 		reject_reclassification(*var, value_reg, func, site);
 		value_reg = coerce_to_declared_type(value_reg, get_register_type(func, var->register_num), func,
 			"variable '" + name + "'", site);

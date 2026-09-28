@@ -1399,11 +1399,14 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 	// ':' is ambiguous: type hint, accessor block, or bare `var x:`.
 	TypeExpr type_hint;
 	bool accessors_follow = false;
+	bool inferred = false;
 	if (match(TokenType::COLON)) {
 		if (at_property_accessor() || check(TokenType::NEWLINE)) {
 			accessors_follow = true;
 		} else if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
 			type_hint = parse_type_expr();
+		} else {
+			inferred = check(TokenType::ASSIGN);
 		}
 	}
 
@@ -1420,6 +1423,7 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 
 	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
 	stmt->type_hint = type_hint;
+	stmt->inferred = inferred;
 	stmt->doc_comment = doc_comment_above(name.line);
 
 	if (accessors_follow) {
