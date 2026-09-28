@@ -276,7 +276,12 @@ struct ModelBuilder {
 	std::vector<uint8_t> used;
 	std::unordered_set<std::string> unresolved;
 	std::unordered_set<std::string> literal_strings;
-	std::vector<std::pair<int32_t, const FunctionDecl *>> pending_bodies;
+	struct PendingBody {
+		int32_t index;
+		const FunctionDecl *node;
+		const StructDecl *owner;
+	};
+	std::vector<PendingBody> pending_bodies;
 	int32_t current_function = -1;
 
 	ModelBuilder(SourceModel &p_model, const Program &p_program,
@@ -413,6 +418,17 @@ struct ModelBuilder {
 		}
 		return nullptr;
 	}
+	// Inside a class a bare call names the class's own method (or an inherited one) first.
+	const StructDecl *current_class = nullptr;
+	const FunctionDecl *find_callable(const std::string &name) const {
+		for (const StructDecl *at = current_class; at != nullptr;
+				at = at->base_name.empty() ? nullptr : find_struct(at->base_name)) {
+			for (const FunctionDecl &method : at->methods) {
+				if (method.name == name) return &method;
+			}
+		}
+		return find_function(name);
+	}
 	const FunctionDecl *find_function(const std::string &name) const {
 		for (const FunctionDecl &declaration : program.functions) {
 			if (declaration.name == name) return &declaration;
@@ -539,9 +555,11 @@ struct ModelBuilder {
 			used[size_t(index)] = 1;
 		}
 		emit_file_members();
-		for (const auto &entry : pending_bodies) {
-			walk_function_body(entry.first, *entry.second);
+		for (const PendingBody &entry : pending_bodies) {
+			current_class = entry.owner;
+			walk_function_body(entry.index, *entry.node);
 		}
+		current_class = nullptr;
 		report_unused();
 	}
 
@@ -623,9 +641,12 @@ struct ModelBuilder {
 					constant_line, end);
 			used[size_t(child)] = 1;
 		}
+		const StructDecl *enclosing = current_class;
+		current_class = &node;
 		for (const FunctionDecl &method : node.methods) {
 			emit_function(method, index);
 		}
+		current_class = enclosing;
 	}
 
 	void emit_trait(const TraitDecl &node) {
@@ -711,7 +732,7 @@ struct ModelBuilder {
 					std::string() : parameter.type_hint.to_string();
 			model.declarations[size_t(child)].resolved_type = type_name_of(parameter.type_hint);
 		}
-		pending_bodies.push_back({index, &node});
+		pending_bodies.push_back({index, &node, current_class});
 	}
 
 	void walk_function_body(int32_t index, const FunctionDecl &node) {
@@ -915,7 +936,7 @@ struct ModelBuilder {
 	}
 
 	void check_call_arity(const CallExpr *call) {
-		const FunctionDecl *function = find_function(call->function_name);
+		const FunctionDecl *function = find_callable(call->function_name);
 		if (function == nullptr || call->has_named_arguments()) return;
 		const size_t given = call->arguments.size();
 		const size_t declared = function->parameters.size();

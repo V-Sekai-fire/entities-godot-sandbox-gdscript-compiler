@@ -7,6 +7,7 @@
 #include "../ir_verifier.h"
 #include "../lexer.h"
 #include "../parser.h"
+#include "../source_model.h"
 #include "witness/doctest.h"
 #include <string>
 
@@ -183,4 +184,39 @@ TEST_CASE("an Array literal fills a packed array slot") {
 
 TEST_CASE("a bare string at file level is a comment") {
 	CHECK_NOTHROW(parse("func f():\n\tpass\n'''\nnot code: (\n'''\n"));
+}
+
+static int count_code(const SourceModel &model, const std::string &code) {
+	int n = 0;
+	for (const SourceDiagnostic &d : model.diagnostics) {
+		n += d.code == code;
+	}
+	return n;
+}
+
+TEST_CASE("a bare call in a class names the class's method before the file's function") {
+	const SourceModel model = analyze_source(
+			"func run(a, b):\n"
+			"\treturn a\n"
+			"class Handler:\n"
+			"\tfunc run(a, b, c, d = 0):\n"
+			"\t\treturn a\n"
+			"\tfunc go():\n"
+			"\t\treturn run(1, 2, 3)\n",
+			"arity.gd", ANALYZE_DIAGNOSTICS | ANALYZE_DECLARATIONS);
+	CHECK(count_code(model, "TOO_MANY_ARGUMENTS") == 0);
+
+	const SourceModel outside = analyze_source(
+			"func run(a, b):\n"
+			"\treturn a\n"
+			"func go():\n"
+			"\treturn run(1, 2, 3)\n",
+			"arity.gd", ANALYZE_DIAGNOSTICS | ANALYZE_DECLARATIONS);
+	CHECK(count_code(outside, "TOO_MANY_ARGUMENTS") == 1);
+}
+
+TEST_CASE("an expression statement is reported once") {
+	const SourceModel model = analyze_source("func f():\n\tvar c = 1\n\tc ++ 1\n\treturn c\n", "once.gd",
+											 ANALYZE_DIAGNOSTICS | ANALYZE_DECLARATIONS);
+	CHECK(count_code(model, "STANDALONE_EXPRESSION") == 1);
 }
