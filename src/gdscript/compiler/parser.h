@@ -116,6 +116,7 @@ private:
 	static ExprPtr make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right);
 	// Null when the target cannot be read twice without side effects.
 	static ExprPtr clone_lvalue(const Expr* expr);
+	StmtPtr hoist_compound_target(ExprPtr target, BinaryExpr::Op op, ExprPtr rhs);
 
 	bool match(TokenType type);
 	bool match_one_of(std::initializer_list<TokenType> types);
@@ -161,6 +162,7 @@ private:
 	bool m_extensions = true;
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;
+	int m_compound_temps = 0;
 	// Tracks `await` in the current function body.
 	bool m_saw_await = false;
 	int m_inline_suite_depth = 0;

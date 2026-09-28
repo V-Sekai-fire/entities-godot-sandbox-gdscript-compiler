@@ -1,6 +1,7 @@
 #include "parser.h"
 #include "compiler_exception.h"
 #include "globals.h"
+#include <functional>
 #include <stdexcept>
 #include <sstream>
 #include <cmath>
@@ -1784,6 +1785,7 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		return std::make_unique<ExprStmt>(std::move(expr));
 	}
 
+	const size_t statement_start = m_current;
 	ExprPtr lhs = parse_call();
 
 	if (match(TokenType::ASSIGN)) {
@@ -1835,8 +1837,17 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		}
 		ExprPtr read = clone_lvalue(lhs.get());
 		if (!read) {
-			throw CompilerException::parser_error(
-				"Invalid target for compound assignment", lhs->line, lhs->column);
+			const IndexExpr* index = dynamic_cast<const IndexExpr*>(lhs.get());
+			const MemberCallExpr* member = dynamic_cast<const MemberCallExpr*>(lhs.get());
+			if (!(index && !index->safe_chain_root) &&
+				!(member && !member->is_method_call && !member->safe)) {
+				throw CompilerException::parser_error(
+					"Invalid target for compound assignment", lhs->line, lhs->column);
+			}
+			advance();
+			ExprPtr rhs = parse_expression();
+			consume_statement_end("Expected newline after assignment");
+			return hoist_compound_target(std::move(lhs), entry.op, std::move(rhs));
 		}
 		advance();
 
@@ -1850,6 +1861,13 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		return std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
 	}
 
+	// GDScript accepts any expression as a statement (`a + b`); reparse it whole and warn.
+	if (!check(TokenType::NEWLINE) && !check(TokenType::SEMICOLON) && !check(TokenType::DEDENT) &&
+		!is_at_end() && !(m_inline_suite_depth > 0 && at_inline_suite_end())) {
+		m_current = statement_start;
+		lhs = parse_expression();
+		warn("STANDALONE_EXPRESSION", "Standalone expression has no effect", lhs->line, lhs->column);
+	}
 	consume_statement_end("Expected newline after expression");
 	return std::make_unique<ExprStmt>(std::move(lhs));
 }
@@ -1901,7 +1919,51 @@ ExprPtr Parser::clone_lvalue(const Expr* expr) {
 		}
 		return make_like<IndexExpr>(*expr, std::move(object), std::move(subscript));
 	}
+	if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		ExprPtr operand = clone_lvalue(unary->operand.get());
+		if (!operand) {
+			return nullptr;
+		}
+		return make_like<UnaryExpr>(*expr, unary->op, std::move(operand));
+	}
 	return nullptr;
+}
+
+// `f()[k] op= v` evaluates the container and key once into temporaries, inside an `if true:` scope.
+StmtPtr Parser::hoist_compound_target(ExprPtr target, BinaryExpr::Op op, ExprPtr rhs) {
+	const Expr& at = *target;
+	std::vector<StmtPtr> body;
+	const std::function<std::string(ExprPtr)> temp = [&](ExprPtr value) {
+		std::string name = "__compound_" + std::to_string(m_compound_temps++);
+		std::unique_ptr<VarDeclStmt> decl = std::make_unique<VarDeclStmt>(name, std::move(value));
+		decl->line = at.line;
+		decl->column = at.column;
+		body.push_back(std::move(decl));
+		return name;
+	};
+	ExprPtr write;
+	ExprPtr read;
+	if (IndexExpr* index = dynamic_cast<IndexExpr*>(target.get())) {
+		const std::string object = temp(std::move(index->object));
+		const std::string key = temp(std::move(index->index));
+		write = make_like<IndexExpr>(at, make_like<VariableExpr>(at, object), make_like<VariableExpr>(at, key));
+		read = make_like<IndexExpr>(at, make_like<VariableExpr>(at, object), make_like<VariableExpr>(at, key));
+	} else {
+		MemberCallExpr* member = static_cast<MemberCallExpr*>(target.get());
+		const std::string object = temp(std::move(member->object));
+		write = make_like<MemberCallExpr>(at, make_like<VariableExpr>(at, object), member->member_name,
+			std::vector<ExprPtr>{}, false);
+		read = make_like<MemberCallExpr>(at, make_like<VariableExpr>(at, object), member->member_name,
+			std::vector<ExprPtr>{}, false);
+	}
+	std::unique_ptr<AssignStmt> assign = std::make_unique<AssignStmt>(std::move(write), make_binary(std::move(read), op, std::move(rhs)));
+	assign->line = at.line;
+	assign->column = at.column;
+	body.push_back(std::move(assign));
+	std::unique_ptr<IfStmt> scope = std::make_unique<IfStmt>(make_like<LiteralExpr>(at, true), std::move(body));
+	scope->line = at.line;
+	scope->column = at.column;
+	return scope;
 }
 
 ExprPtr Parser::make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right) {
