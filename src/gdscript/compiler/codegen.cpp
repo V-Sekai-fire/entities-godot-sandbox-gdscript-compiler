@@ -218,6 +218,18 @@ bool constructs_implicitly_from(IRInstruction::TypeHint from, IRInstruction::Typ
 			return from == Variant::TRANSFORM2D || from == Variant::QUATERNION ||
 				from == Variant::BASIS || from == Variant::PROJECTION;
 		case Variant::PROJECTION:  return from == Variant::TRANSFORM3D;
+		// GDScript converts an Array literal assigned to a packed array's slot.
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_STRING_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_VECTOR4_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY:
+			return from == Variant::ARRAY;
 		case Variant::ARRAY:
 			switch (from) {
 				case Variant::PACKED_BYTE_ARRAY:
@@ -1224,6 +1236,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 		accepted_type.nullable = true;
 	}
 	const StructDecl* declared_struct = find_struct(accepted_type.sole_name());
+	// A class hint accepts null without `?`, as it does on a global and in GDScript.
+	if (declared_struct != nullptr && declared_struct->is_class && !accepted_type.is_union()) {
+		accepted_type.nullable = true;
+	}
 	const TraitDecl* declared_trait = find_trait(accepted_type.sole_name());
 	const TypeSet declared_set = type_set_from(accepted_type, stmt->line, stmt->column);
 	const bool nullable_single = declared_set.is_nullable_single();

@@ -250,6 +250,11 @@ Program Parser::parse() {
 			function.is_static = is_static;
 			program.functions.push_back(std::move(function));
 			saw_declaration = true;
+		} else if (check(TokenType::STRING) && (peek_ahead(1).type == TokenType::NEWLINE ||
+				peek_ahead(1).type == TokenType::EOF_TOKEN)) {
+			// A bare string at file level is a block comment, as GDScript reads it.
+			advance();
+			consume_statement_end("Expected newline after the string");
 		} else {
 			error("Expected function or variable declaration");
 			synchronize();
