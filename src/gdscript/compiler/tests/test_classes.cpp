@@ -154,8 +154,8 @@ TEST_CASE("the instance is a dictionary") {
 		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
 			continue;
 		}
-		check(instr.operands[1].immediate() == 3,
-			  "an instance of Derived holds v, extra and the class it was made from");
+		check(instr.operands[1].immediate() == 4,
+			  "an instance of Derived holds v, extra, the class it was made from and the seal");
 	}
 
 	const std::vector<std::string> calls = called_names(ir, *test);
@@ -556,8 +556,8 @@ TEST_CASE("a native base is constructed with the instance") {
 
 	for (const IRInstruction &instr : test->instructions) {
 		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
-			check(instr.operands[1].immediate() == 3,
-				  "the instance Dictionary holds the declared field, the base and the class");
+			check(instr.operands[1].immediate() == 4,
+				  "the instance Dictionary holds the declared field, the base, the class and the seal");
 		}
 	}
 
@@ -694,8 +694,11 @@ TEST_CASE("a class typed member holds null") {
 	check(compile_error(source).empty(), "both spellings of a nullable class member compile");
 
 	const IRProgram ir = compile_to_ir(source);
-	check(ir.globals.size() == 3, "the three members are declared");
+	check(ir.globals.size() == 4, "the three members and the seal are declared");
 	for (const IRGlobalVar &global : ir.globals) {
+		if (global.name == "@seal") {
+			continue;
+		}
 		check(global.init_type == IRGlobalVar::InitType::NULL_VAL,
 			  "member '" + global.name + "' starts null");
 	}
@@ -1153,8 +1156,14 @@ TEST_CASE("a class body holds constants and static methods") {
 		}
 		check(immediates == 2,
 			  "both the qualified name and the field default are the immediate");
-		check(count_opcode(*folded_test, IROpcode::LOAD_GLOBAL) == 0,
-			  "a class constant needs no global slot");
+		int constant_loads = 0;
+		for (const IRInstruction &instr : folded_test->instructions) {
+			if (instr.opcode == IROpcode::LOAD_GLOBAL &&
+				folded.globals[size_t(instr.operands[1].immediate())].name != "@seal") {
+				constant_loads++;
+			}
+		}
+		check(constant_loads == 0, "a class constant needs no global slot");
 	}
 
 	// A base's constant is inherited, and reached by a bare name in the body.
@@ -1231,9 +1240,9 @@ TEST_CASE("an untracked instance answers is") {
 	if (take != nullptr) {
 		check(!vcalls(ir, *take, "is_class") && !vcalls(ir, *take, "get_script"),
 			  "the file declares the chain, so the engine is not asked");
-		check(count_opcode(*take, IROpcode::DICT_GET_CONST) == 1,
-			  "one get answers it, whatever the chain's length");
-		check(count_opcode(*take, IROpcode::CMP_EQ) == 2,
+		check(count_opcode(*take, IROpcode::DICT_GET_CONST) == 2,
+			  "the class and the seal answer it, whatever the chain's length");
+		check(count_opcode(*take, IROpcode::CMP_EQ) == 3,
 			  "Base and Derived answer true, Other is not compared against");
 	}
 

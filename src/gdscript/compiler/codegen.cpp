@@ -12,6 +12,10 @@
 
 namespace gdscript {
 
+// The hidden per-program seal global, and the key every class instance carries it under.
+static constexpr const char* SEAL_GLOBAL_NAME = "@seal";
+static constexpr const char* SEAL_KEY = "@seal";
+
 void CodeGenerator::set_engine_ancestry(
 	const std::vector<std::pair<std::string, std::string>>& pairs) {
 	m_engine_ancestry = pairs;
@@ -500,6 +504,34 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_global_holds_object.push_back(declared.contains(Variant::OBJECT));
 	}
 
+	// One engine object per program marks every class instance it builds. Parsed data can
+	// only yield strings, numbers and containers, so it cannot forge an instance's `@seal`.
+	m_seal_global = -1;
+	const bool declares_class = std::any_of(program.structs.begin(), program.structs.end(),
+		[](const StructDecl& decl) { return decl.is_class; });
+	if (declares_class) {
+		m_seal_global = int(ir_program.globals.size());
+		IRGlobalVar seal;
+		seal.name = SEAL_GLOBAL_NAME;
+		seal.is_static = true;
+		seal.storage = IRGlobalVar::Storage::Data;
+		seal.init_type = IRGlobalVar::InitType::RUNTIME;
+		seal.type_hint = Variant::OBJECT;
+		seal.value_type = Variant::OBJECT;
+		ir_program.globals.push_back(std::move(seal));
+		m_global_is_member.push_back(false);
+		m_global_types.push_back(Variant::OBJECT);
+		m_global_sets.push_back(TypeSet{});
+		m_global_type_names.push_back("Object");
+		m_global_structs.push_back(nullptr);
+		m_global_traits.push_back(nullptr);
+		m_global_array_element_structs.push_back(nullptr);
+		m_global_dictionary_value_structs.push_back(nullptr);
+		m_global_array_element_traits.push_back(nullptr);
+		m_global_dictionary_value_traits.push_back(nullptr);
+		m_global_holds_object.push_back(true);
+	}
+
 	collect_property_accessors(program);
 
 	FunctionContext init_func;
@@ -510,6 +542,21 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_globals_lowered = 0;
 	push_scope(init_func);
 	push_scope(member_func);
+
+	if (m_seal_global >= 0) {
+		int seal_reg = alloc_register(init_func);
+		IRInstruction create(IROpcode::CALL_SYSCALL);
+		create.operands.push_back(IRValue::reg(seal_reg));
+		create.operands.push_back(IRValue::imm(ECALL_NODE_CREATE));
+		create.operands.push_back(IRValue::imm(add_string_constant("RefCounted")));
+		create.operands.push_back(IRValue::imm(int64_t(std::string("RefCounted").length())));
+		init_func.ir.instructions.push_back(create);
+		set_register_type(init_func, seal_reg, Variant::OBJECT);
+		init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+			IRValue::imm(int64_t(m_seal_global)), IRValue::reg(seal_reg));
+		free_register(init_func, seal_reg);
+		ir_program.has_global_init = true;
+	}
 
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
@@ -5566,6 +5613,126 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 // The name a class instance was made from, so a Dictionary can answer `is`.
 static constexpr const char* CLASS_NAME_KEY = "@class";
 
+// The `@class` name of a Dictionary known to be one, or null unless its `@seal` is this
+// program's own seal object: a forged `@class` key names no class.
+int CodeGenerator::gen_sealed_class_tag(int value_reg, FunctionContext& func) {
+	int tag_reg = gen_dict_get(value_reg, CLASS_NAME_KEY, func);
+	if (m_seal_global < 0) {
+		return tag_reg;
+	}
+	const std::string sealed_label = make_label("sealed");
+	int seal_reg = gen_dict_get(value_reg, SEAL_KEY, func);
+	int expected_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(expected_reg),
+		IRValue::imm(int64_t(m_seal_global)));
+	set_register_type(func, expected_reg, Variant::OBJECT);
+	int same_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(same_reg),
+		IRValue::reg(seal_reg), IRValue::reg(expected_reg));
+	set_register_type(func, same_reg, Variant::BOOL);
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, same_reg, sealed_label, func);
+	func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(tag_reg));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(sealed_label));
+	set_register_type(func, tag_reg, IRInstruction::TypeHint_NONE);
+	free_register(func, same_reg);
+	free_register(func, expected_reg);
+	free_register(func, seal_reg);
+	return tag_reg;
+}
+
+// `obj.m(args)` on an untyped receiver: a sealed class instance calls the `m` its class
+// resolves to, anything else takes the generic VCALL. Arguments are evaluated once.
+int CodeGenerator::gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, FunctionContext& func) {
+	struct Arm {
+		const StructDecl* decl;
+		const FunctionDecl* method;
+		const StructDecl* owner;
+	};
+	std::vector<std::string> names;
+	for (const std::unordered_map<std::string, const StructDecl*>::value_type& entry : m_structs) {
+		if (entry.second->is_class) names.push_back(entry.first);
+	}
+	std::sort(names.begin(), names.end());
+	std::vector<Arm> arms;
+	for (const std::string& name : names) {
+		const StructDecl* decl = find_struct(name);
+		const StructDecl* owner = nullptr;
+		const FunctionDecl* method = find_class_method(*decl, expr->member_name, &owner);
+		if (method == nullptr || method->is_coroutine || expr->arguments.size() > method->parameters.size()) {
+			continue;
+		}
+		bool defaults_cover = true;
+		for (size_t i = expr->arguments.size(); i < method->parameters.size(); i++) {
+			defaults_cover = defaults_cover && method->parameters[i].default_value != nullptr;
+		}
+		if (defaults_cover) arms.push_back({decl, method, owner});
+	}
+	if (arms.empty()) {
+		return -1;
+	}
+
+	std::vector<int> arg_regs;
+	for (const ExprPtr& argument : expr->arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+	int result_reg = alloc_register(func);
+	const std::string fallback_label = make_label("dispatch_fallback");
+	const std::string end_label = make_label("dispatch_end");
+
+	if (get_register_type(func, obj_reg) != Variant::DICTIONARY) {
+		int is_dict_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_dict_reg),
+			IRValue::reg(obj_reg), IRValue::imm(int64_t(Variant::DICTIONARY)));
+		set_register_type(func, is_dict_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_dict_reg, fallback_label, func);
+		free_register(func, is_dict_reg);
+	}
+	int tag_reg = gen_sealed_class_tag(obj_reg, func);
+	for (const Arm& arm : arms) {
+		const std::string next_label = make_label("dispatch_next");
+		int name_reg = gen_string_value(arm.decl->name, func);
+		int match_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(match_reg),
+			IRValue::reg(tag_reg), IRValue::reg(name_reg));
+		set_register_type(func, match_reg, Variant::BOOL);
+		free_register(func, name_reg);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, match_reg, next_label, func);
+		free_register(func, match_reg);
+
+		std::vector<int> call_regs;
+		if (!arm.method->is_static) call_regs.push_back(obj_reg);
+		call_regs.insert(call_regs.end(), arg_regs.begin(), arg_regs.end());
+		std::vector<int> default_regs;
+		for (size_t i = expr->arguments.size(); i < arm.method->parameters.size(); i++) {
+			default_regs.push_back(gen_expr(arm.method->parameters[i].default_value.get(), func));
+		}
+		call_regs.insert(call_regs.end(), default_regs.begin(), default_regs.end());
+		IRInstruction call(IROpcode::CALL);
+		call.operands.push_back(ir_str(lifted_method_name(*arm.owner, arm.method->name)));
+		call.operands.push_back(IRValue::reg(result_reg));
+		call.operands.push_back(IRValue::imm(int64_t(call_regs.size())));
+		for (int reg : call_regs) call.operands.push_back(IRValue::reg(reg));
+		func.ir.instructions.push_back(std::move(call));
+		for (int reg : default_regs) free_register(func, reg);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
+	}
+	free_register(func, tag_reg);
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(fallback_label));
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(obj_reg));
+	vcall.operands.push_back(ir_str(expr->member_name));
+	vcall.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+	for (int reg : arg_regs) vcall.operands.push_back(IRValue::reg(reg));
+	func.ir.instructions.push_back(std::move(vcall));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	for (int reg : arg_regs) free_register(func, reg);
+	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
+	return result_reg;
+}
+
 // `x is Declared` where x is a Dictionary of unknown provenance: compare the
 // `@class` the constructor wrote against every class in the file that derives
 // from the one asked about. Answers -1 when the name is not one of them, which
@@ -5613,7 +5780,7 @@ int CodeGenerator::gen_instance_class_test(int value_reg, const std::string& cla
 	}
 
 	// One get: a missing key answers null, which matches no name.
-	int tag_reg = gen_dict_get(value_reg, CLASS_NAME_KEY, func);
+	int tag_reg = gen_sealed_class_tag(value_reg, func);
 	for (const std::string& name : names) {
 		int name_reg = alloc_register(func);
 		IRInstruction load_name(IROpcode::LOAD_STRING, IRValue::reg(name_reg),
@@ -5973,7 +6140,7 @@ int CodeGenerator::gen_trait_test(int value_reg, const TraitDecl& iface,
 	}
 	if (known != Variant::OBJECT) {
 		if (!class_names.empty()) {
-			int tag = gen_dict_get(value_reg, CLASS_NAME_KEY, func);
+			int tag = gen_sealed_class_tag(value_reg, func);
 			for (const std::string& name : class_names) {
 				int expected = gen_string_value(name, func);
 				func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(result),
@@ -7012,6 +7179,11 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 						expr->member_name + "()' on an untyped value", expr,
 						"Declare the receiver as '" + structure->name + "'");
 				}
+			}
+			int dispatched = gen_class_dispatch(expr, obj_reg, func);
+			if (dispatched >= 0) {
+				free_register(func, obj_reg);
+				return dispatched;
 			}
 		}
 	}
@@ -8629,8 +8801,18 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 		set_register_type(func, class_reg, Variant::STRING);
 	}
 
+	int seal_key_reg = -1;
+	int seal_reg = -1;
+	if (class_reg >= 0 && m_seal_global >= 0) {
+		seal_key_reg = gen_string_value(SEAL_KEY, func);
+		seal_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(seal_reg),
+			IRValue::imm(int64_t(m_seal_global)));
+		set_register_type(func, seal_reg, Variant::OBJECT);
+	}
+
 	const size_t entries = fields.size() + (base_class != nullptr ? 1 : 0)
-		+ (class_reg >= 0 ? 1 : 0);
+		+ (class_reg >= 0 ? 1 : 0) + (seal_reg >= 0 ? 1 : 0);
 	int result_reg = alloc_register(func);
 	IRInstruction make(IROpcode::MAKE_DICTIONARY);
 	make.operands.push_back(IRValue::reg(result_reg));
@@ -8640,6 +8822,10 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 	if (class_reg >= 0) {
 		make.operands.push_back(IRValue::reg(class_key_reg));
 		make.operands.push_back(IRValue::reg(class_reg));
+	}
+	if (seal_reg >= 0) {
+		make.operands.push_back(IRValue::reg(seal_key_reg));
+		make.operands.push_back(IRValue::reg(seal_reg));
 	}
 	if (base_class != nullptr) {
 		base_key_reg = alloc_register(func);
@@ -8686,6 +8872,10 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 	}
 	if (class_reg >= 0) {
 		free_register(func, class_reg);
+	}
+	if (seal_reg >= 0) {
+		free_register(func, seal_key_reg);
+		free_register(func, seal_reg);
 	}
 
 	// Before _init(), so the class is a script instance while _init() runs, the
