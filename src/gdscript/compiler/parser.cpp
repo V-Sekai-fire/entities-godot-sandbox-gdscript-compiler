@@ -1900,12 +1900,11 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		return std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
 	}
 
-	// GDScript accepts any expression as a statement (`a + b`); reparse it whole and warn.
+	// GDScript accepts any expression as a statement (`a + b`); reparse it whole.
 	if (!check(TokenType::NEWLINE) && !check(TokenType::SEMICOLON) && !check(TokenType::DEDENT) &&
 		!is_at_end() && !(m_inline_suite_depth > 0 && at_inline_suite_end())) {
 		m_current = statement_start;
 		lhs = parse_expression();
-		warn("STANDALONE_EXPRESSION", "Standalone expression has no effect", lhs->line, lhs->column);
 	}
 	consume_statement_end("Expected newline after expression");
 	return std::make_unique<ExprStmt>(std::move(lhs));
