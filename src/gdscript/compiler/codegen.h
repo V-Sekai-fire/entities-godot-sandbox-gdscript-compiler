@@ -639,6 +639,12 @@ private:
 	std::vector<bool> m_global_holds_object;
 	// Index of the hidden `@seal` global, or -1 when the program declares no class.
 	int m_seal_global = -1;
+	// Class name -> hidden global holding the object that class evaluates to as a value.
+	std::unordered_map<std::string, int> m_class_value_globals;
+	int gen_class_value_new(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
+	std::vector<std::pair<std::string, size_t>> m_pending_constructors;
+	static std::string class_value_constructor_name(const std::string& class_name, size_t arity);
+	IRFunction generate_class_value_constructor(const StructDecl& decl, size_t arity);
 
 	bool type_hint_names_a_class(const std::string& type_hint) const;
 	void mark_global_holds_object(int64_t global_idx);

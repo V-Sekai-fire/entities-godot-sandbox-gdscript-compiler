@@ -15,6 +15,8 @@ namespace gdscript {
 // The hidden per-program seal global, and the key every class instance carries it under.
 static constexpr const char* SEAL_GLOBAL_NAME = "@seal";
 static constexpr const char* SEAL_KEY = "@seal";
+// Hidden global holding the object a class name evaluates to when used as a value.
+static constexpr const char* CLASS_VALUE_PREFIX = "@class:";
 
 void CodeGenerator::set_engine_ancestry(
 	const std::vector<std::pair<std::string, std::string>>& pairs) {
@@ -516,32 +518,48 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_global_holds_object.push_back(declared.contains(Variant::OBJECT));
 	}
 
-	// One engine object per program marks every class instance it builds. Parsed data can
-	// only yield strings, numbers and containers, so it cannot forge an instance's `@seal`.
+	// One engine object per program marks every class instance it builds, and one per class is
+	// what the class name evaluates to as a value. Parsed data can only yield strings, numbers
+	// and containers, so it can forge neither an instance's `@seal` nor a class value.
 	m_seal_global = -1;
 	const bool declares_class = std::any_of(program.structs.begin(), program.structs.end(),
 		[](const StructDecl& decl) { return decl.is_class; });
+	m_class_value_globals.clear();
 	if (declares_class) {
-		m_seal_global = int(ir_program.globals.size());
-		IRGlobalVar seal;
-		seal.name = SEAL_GLOBAL_NAME;
-		seal.is_static = true;
-		seal.storage = IRGlobalVar::Storage::Data;
-		seal.init_type = IRGlobalVar::InitType::RUNTIME;
-		seal.type_hint = Variant::OBJECT;
-		seal.value_type = Variant::OBJECT;
-		ir_program.globals.push_back(std::move(seal));
-		m_global_is_member.push_back(false);
-		m_global_types.push_back(Variant::OBJECT);
-		m_global_sets.push_back(TypeSet{});
-		m_global_type_names.push_back("Object");
-		m_global_structs.push_back(nullptr);
-		m_global_traits.push_back(nullptr);
-		m_global_array_element_structs.push_back(nullptr);
-		m_global_dictionary_value_structs.push_back(nullptr);
-		m_global_array_element_traits.push_back(nullptr);
-		m_global_dictionary_value_traits.push_back(nullptr);
-		m_global_holds_object.push_back(true);
+		std::vector<std::string> hidden = { SEAL_GLOBAL_NAME };
+		std::vector<std::string> class_names;
+		for (const StructDecl& decl : program.structs) {
+			if (decl.is_class) class_names.push_back(decl.name);
+		}
+		std::sort(class_names.begin(), class_names.end());
+		for (const std::string& name : class_names) hidden.push_back(CLASS_VALUE_PREFIX + name);
+		for (const std::string& hidden_name : hidden) {
+			const int index = int(ir_program.globals.size());
+			if (hidden_name == SEAL_GLOBAL_NAME) {
+				m_seal_global = index;
+			} else {
+				m_class_value_globals[hidden_name.substr(std::string(CLASS_VALUE_PREFIX).size())] = index;
+			}
+			IRGlobalVar sentinel;
+			sentinel.name = hidden_name;
+			sentinel.is_static = true;
+			sentinel.storage = IRGlobalVar::Storage::Data;
+			sentinel.init_type = IRGlobalVar::InitType::RUNTIME;
+			sentinel.type_hint = Variant::OBJECT;
+			sentinel.value_type = Variant::OBJECT;
+			ir_program.globals.push_back(std::move(sentinel));
+			m_global_is_member.push_back(false);
+			m_global_types.push_back(Variant::OBJECT);
+			m_global_sets.push_back(TypeSet{});
+			m_global_type_names.push_back("Object");
+			m_global_structs.push_back(nullptr);
+			m_global_traits.push_back(nullptr);
+			m_global_array_element_structs.push_back(nullptr);
+			m_global_dictionary_value_structs.push_back(nullptr);
+			m_global_array_element_traits.push_back(nullptr);
+			m_global_dictionary_value_traits.push_back(nullptr);
+			m_global_holds_object.push_back(true);
+		}
 	}
 
 	collect_property_accessors(program);
@@ -555,7 +573,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	push_scope(init_func);
 	push_scope(member_func);
 
-	if (m_seal_global >= 0) {
+	std::vector<int> sentinel_globals;
+	if (m_seal_global >= 0) sentinel_globals.push_back(m_seal_global);
+	for (const std::pair<const std::string, int>& entry : m_class_value_globals) sentinel_globals.push_back(entry.second);
+	std::sort(sentinel_globals.begin(), sentinel_globals.end());
+	for (int sentinel_global : sentinel_globals) {
 		int seal_reg = alloc_register(init_func);
 		IRInstruction create(IROpcode::CALL_SYSCALL);
 		create.operands.push_back(IRValue::reg(seal_reg));
@@ -565,7 +587,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		init_func.ir.instructions.push_back(create);
 		set_register_type(init_func, seal_reg, Variant::OBJECT);
 		init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
-			IRValue::imm(int64_t(m_seal_global)), IRValue::reg(seal_reg));
+			IRValue::imm(int64_t(sentinel_global)), IRValue::reg(seal_reg));
 		free_register(init_func, seal_reg);
 		ir_program.has_global_init = true;
 	}
@@ -835,39 +857,53 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 	}
 
-	// Queue grows while iterating (nested lambdas append).
-	for (size_t i = 0; i < m_pending_lambdas.size(); i++) {
-		const PendingLambda pending = m_pending_lambdas[i];
-		m_current_function = pending.lifted_name;
-
-		// Keep the sandbox ABI unchanged; native Callables complete defaults at the host boundary.
-		FunctionSignature signature = m_native_classes ? build_signature(*pending.decl) : FunctionSignature();
-		if (m_native_classes && !pending.captures.empty()) {
-			FunctionParameter captures;
-			captures.name = "@captures";
-			captures.type = Variant::ARRAY;
-			signature.parameters.insert(signature.parameters.begin(), std::move(captures));
-			++signature.required_arguments;
+	// Both queues grow while iterating: lambdas nest, and a constructor's field defaults
+	// may build other classes through a class value or hold lambdas.
+	size_t lambda_index = 0;
+	size_t constructor_index = 0;
+	while (lambda_index < m_pending_lambdas.size() || constructor_index < m_pending_constructors.size()) {
+		if (constructor_index < m_pending_constructors.size()) {
+			const std::pair<std::string, size_t> pending = m_pending_constructors[constructor_index++];
+			FunctionSignature signature;
+			signature.name = class_value_constructor_name(pending.first, pending.second);
+			ir_program.signatures.push_back(std::move(signature));
+			ir_program.functions.push_back(generate_class_value_constructor(*find_struct(pending.first), pending.second));
+			continue;
 		}
-		signature.name = pending.lifted_name;
-		signature.line = pending.decl->line;
-		ir_program.signatures.push_back(std::move(signature));
+		{
+			const PendingLambda pending = m_pending_lambdas[lambda_index++];
+			m_current_function = pending.lifted_name;
 
-		m_current_class = pending.owner;
-		m_current_chain_link = pending.chain_link;
-		m_current_chain_function = pending.chain_function;
-		m_in_static_function = pending.in_static_function;
-		IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
-		lifted.source_path = size_t(pending.chain_link) < m_chain.paths.size()
-			? m_chain.paths[size_t(pending.chain_link)] : m_source_path;
-		m_in_static_function = false;
-		m_current_class = nullptr;
-		m_current_chain_link = 0;
-		m_current_chain_function.clear();
-		lifted.name = pending.lifted_name;
-		ir_program.functions.push_back(std::move(lifted));
+			// Keep the sandbox ABI unchanged; native Callables complete defaults at the host boundary.
+			FunctionSignature signature = m_native_classes ? build_signature(*pending.decl) : FunctionSignature();
+			if (m_native_classes && !pending.captures.empty()) {
+				FunctionParameter captures;
+				captures.name = "@captures";
+				captures.type = Variant::ARRAY;
+				signature.parameters.insert(signature.parameters.begin(), std::move(captures));
+				++signature.required_arguments;
+			}
+			signature.name = pending.lifted_name;
+			signature.line = pending.decl->line;
+			ir_program.signatures.push_back(std::move(signature));
+
+			m_current_class = pending.owner;
+			m_current_chain_link = pending.chain_link;
+			m_current_chain_function = pending.chain_function;
+			m_in_static_function = pending.in_static_function;
+			IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
+			lifted.source_path = size_t(pending.chain_link) < m_chain.paths.size()
+				? m_chain.paths[size_t(pending.chain_link)] : m_source_path;
+			m_in_static_function = false;
+			m_current_class = nullptr;
+			m_current_chain_link = 0;
+			m_current_chain_function.clear();
+			lifted.name = pending.lifted_name;
+			ir_program.functions.push_back(std::move(lifted));
+		}
 	}
 	m_pending_lambdas.clear();
+	m_pending_constructors.clear();
 
 	for (size_t i = 0; i < ir_program.globals.size() && i < m_global_holds_object.size(); i++) {
 		ir_program.globals[i].holds_object = m_global_holds_object[i];
@@ -877,6 +913,39 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	ir_program.strings = std::move(m_strings);
 	ir_program.has_breakpoint_statement = m_saw_breakpoint_statement;
 	return ir_program;
+}
+
+std::string CodeGenerator::class_value_constructor_name(const std::string& class_name, size_t arity) {
+	return "@" + class_name + ".@new" + std::to_string(arity);
+}
+
+// `Name.new(a0..aN)` as a function, so a class value's `.new()` calls it instead of
+// inlining every class's construction (which recurses through field defaults).
+IRFunction CodeGenerator::generate_class_value_constructor(const StructDecl& decl, size_t arity) {
+	FunctionContext func;
+	func.ir.name = class_value_constructor_name(decl.name, arity);
+	func.ir.source_path = m_source_path;
+	m_current_function = func.ir.name;
+	m_current_class = nullptr;
+	push_scope(func);
+	std::vector<ExprPtr> arguments;
+	for (size_t i = 0; i < arity; i++) {
+		const std::string name = "@arg" + std::to_string(i);
+		func.ir.parameters.push_back(name);
+		func.ir.param_sets.push_back(0);
+		int reg = alloc_register(func);
+		declare_variable(func, name, reg, false, nullptr, false, true);
+		std::unique_ptr<VariableExpr> argument = std::make_unique<VariableExpr>(name);
+		argument->line = decl.line;
+		argument->column = decl.column;
+		arguments.push_back(std::move(argument));
+	}
+	int built_reg = gen_class_construct(decl, arguments, NamedArguments{}, func, nullptr);
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(built_reg));
+	func.ir.instructions.emplace_back(IROpcode::RETURN);
+	func.ir.max_registers = std::max(func.next_register, 1);
+	pop_scope(func);
+	return std::move(func.ir);
 }
 
 IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const StructDecl* owner) {
@@ -4626,6 +4695,14 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 	}
 
 	if (const StructDecl* decl = find_struct(expr->name)) {
+		const std::unordered_map<std::string, int>::const_iterator value = m_class_value_globals.find(decl->name);
+		if (decl->is_class && value != m_class_value_globals.end()) {
+			int result_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg),
+				IRValue::imm(int64_t(value->second)));
+			set_register_type(func, result_reg, Variant::OBJECT);
+			return result_reg;
+		}
 		error_at("Struct '" + decl->name + "' is a type, not a value", expr,
 			"Create an instance with '" + decl->name + ".new()'");
 	}
@@ -5773,6 +5850,78 @@ int CodeGenerator::gen_class_dispatch(const std::string& method_name, const std:
 	int fallback_reg = fallback(arg_regs);
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(fallback_reg));
 	free_register(func, fallback_reg);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	for (int reg : arg_regs) free_register(func, reg);
+	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
+	return result_reg;
+}
+
+// `c.new(args)` where c may be a class used as a value: compare c against each class's
+// object and construct that class; anything else (a Script, say) takes the generic call.
+int CodeGenerator::gen_class_value_new(const MemberCallExpr* expr, int obj_reg, FunctionContext& func) {
+	std::vector<std::pair<std::string, int>> classes(m_class_value_globals.begin(), m_class_value_globals.end());
+	std::sort(classes.begin(), classes.end());
+	std::vector<int> arg_regs;
+	for (const ExprPtr& argument : expr->arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+	int result_reg = alloc_register(func);
+	const std::string fallback_label = make_label("class_new_fallback");
+	const std::string end_label = make_label("class_new_end");
+	if (get_register_type(func, obj_reg) != Variant::OBJECT) {
+		int is_object_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_object_reg),
+			IRValue::reg(obj_reg), IRValue::imm(int64_t(Variant::OBJECT)));
+		set_register_type(func, is_object_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_object_reg, fallback_label, func);
+		free_register(func, is_object_reg);
+	}
+	for (const std::pair<std::string, int>& entry : classes) {
+		const StructDecl* owner = nullptr;
+		const FunctionDecl* init = find_class_method(*find_struct(entry.first), "_init", &owner);
+		const size_t declared = init != nullptr ? init->parameters.size() : 0;
+		bool accepts = arg_regs.size() <= declared;
+		for (size_t i = arg_regs.size(); accepts && i < declared; i++) {
+			accepts = init->parameters[i].default_value != nullptr;
+		}
+		if (!accepts) {
+			continue;
+		}
+		const std::string next_label = make_label("class_new_next");
+		int class_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(class_reg),
+			IRValue::imm(int64_t(entry.second)));
+		set_register_type(func, class_reg, Variant::OBJECT);
+		int same_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(same_reg),
+			IRValue::reg(obj_reg), IRValue::reg(class_reg));
+		set_register_type(func, same_reg, Variant::BOOL);
+		free_register(func, class_reg);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, same_reg, next_label, func);
+		free_register(func, same_reg);
+
+		const std::pair<std::string, size_t> wanted(entry.first, arg_regs.size());
+		if (std::find(m_pending_constructors.begin(), m_pending_constructors.end(), wanted) ==
+			m_pending_constructors.end()) {
+			m_pending_constructors.push_back(wanted);
+		}
+		IRInstruction call(IROpcode::CALL);
+		call.operands.push_back(ir_str(class_value_constructor_name(entry.first, arg_regs.size())));
+		call.operands.push_back(IRValue::reg(result_reg));
+		call.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+		for (int reg : arg_regs) call.operands.push_back(IRValue::reg(reg));
+		func.ir.instructions.push_back(std::move(call));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
+	}
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(fallback_label));
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(obj_reg));
+	vcall.operands.push_back(ir_str("new"));
+	vcall.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+	for (int reg : arg_regs) vcall.operands.push_back(IRValue::reg(reg));
+	func.ir.instructions.push_back(std::move(vcall));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 	for (int reg : arg_regs) free_register(func, reg);
 	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
@@ -7181,6 +7330,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		: gen_expr(object_expr, func);
 	if (expr->safe) {
 		emit_safe_guard(obj_reg, func, expr);
+	}
+
+	if (expr->is_method_call && expr->member_name == "new" && get_register_struct(func, obj_reg) == nullptr &&
+		!m_class_value_globals.empty()) {
+		const IRInstruction::TypeHint receiver = get_register_type(func, obj_reg);
+		if (receiver == IRInstruction::TypeHint_NONE || receiver == Variant::OBJECT) {
+			int result = gen_class_value_new(expr, obj_reg, func);
+			free_register(func, obj_reg);
+			return result;
+		}
 	}
 
 	if (expr->is_method_call && expr->member_name == "copy" && expr->arguments.empty()) {
