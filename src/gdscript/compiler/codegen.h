@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "ast.h"
 #include "builtin_members.h"
 #include "builtin_methods.h"
@@ -202,6 +203,8 @@ private:
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
 	int gen_sealed_class_tag(int value_reg, FunctionContext& func);
 	int gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
+	int gen_class_dispatch(const std::string& method_name, const std::vector<ExprPtr>& arguments, int obj_reg,
+		FunctionContext& func, const std::function<int(const std::vector<int>&)>& fallback);
 	int gen_instance_class_test(int value_reg, const std::string& class_name, int result_reg,
 		FunctionContext& func);
 	int gen_cast(const CastExpr* expr, FunctionContext& func);
