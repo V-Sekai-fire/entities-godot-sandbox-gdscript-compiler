@@ -1,0 +1,32 @@
+// Enum constants of built-in types (Vector3.AXIS_X, Projection.PLANE_NEAR).
+// Generated from extension_api.json builtin_classes[].enums; Godot Engine v4.6.stable.official.
+// Requires GDSC_BUILTIN_ENUM defined before inclusion.
+
+#ifndef GDSC_BUILTIN_ENUM
+#define GDSC_BUILTIN_ENUM(type, name, value)
+#endif
+
+GDSC_BUILTIN_ENUM(Vector2, AXIS_X, 0)
+GDSC_BUILTIN_ENUM(Vector2, AXIS_Y, 1)
+GDSC_BUILTIN_ENUM(Vector2i, AXIS_X, 0)
+GDSC_BUILTIN_ENUM(Vector2i, AXIS_Y, 1)
+GDSC_BUILTIN_ENUM(Vector3, AXIS_X, 0)
+GDSC_BUILTIN_ENUM(Vector3, AXIS_Y, 1)
+GDSC_BUILTIN_ENUM(Vector3, AXIS_Z, 2)
+GDSC_BUILTIN_ENUM(Vector3i, AXIS_X, 0)
+GDSC_BUILTIN_ENUM(Vector3i, AXIS_Y, 1)
+GDSC_BUILTIN_ENUM(Vector3i, AXIS_Z, 2)
+GDSC_BUILTIN_ENUM(Vector4, AXIS_X, 0)
+GDSC_BUILTIN_ENUM(Vector4, AXIS_Y, 1)
+GDSC_BUILTIN_ENUM(Vector4, AXIS_Z, 2)
+GDSC_BUILTIN_ENUM(Vector4, AXIS_W, 3)
+GDSC_BUILTIN_ENUM(Vector4i, AXIS_X, 0)
+GDSC_BUILTIN_ENUM(Vector4i, AXIS_Y, 1)
+GDSC_BUILTIN_ENUM(Vector4i, AXIS_Z, 2)
+GDSC_BUILTIN_ENUM(Vector4i, AXIS_W, 3)
+GDSC_BUILTIN_ENUM(Projection, PLANE_NEAR, 0)
+GDSC_BUILTIN_ENUM(Projection, PLANE_FAR, 1)
+GDSC_BUILTIN_ENUM(Projection, PLANE_LEFT, 2)
+GDSC_BUILTIN_ENUM(Projection, PLANE_TOP, 3)
+GDSC_BUILTIN_ENUM(Projection, PLANE_RIGHT, 4)
+GDSC_BUILTIN_ENUM(Projection, PLANE_BOTTOM, 5)

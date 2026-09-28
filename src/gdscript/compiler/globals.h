@@ -414,6 +414,7 @@ const HostConstant* find_host_constant(const std::string& type, const std::strin
 
 // True if `type` has any built-in constants (distinguishes typo from unknown type).
 bool has_builtin_constants(const std::string& type);
+bool find_builtin_enum_value(const std::string& type, const std::string& name, int64_t& value);
 
 // Positional access for editor. Rows not contiguous by type; filter on name.
 size_t builtin_constant_count();

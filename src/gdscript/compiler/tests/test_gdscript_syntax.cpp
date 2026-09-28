@@ -132,3 +132,44 @@ TEST_CASE("a class getter on an untyped field, below comment lines") {
 			"\t\tget:\n"
 			"\t\t\treturn true\n"));
 }
+
+TEST_CASE("built-in type enums are integers") {
+	IRProgram ir = compile_to_ir("func test():\n\treturn Vector3.AXIS_Z + Vector2i.AXIS_Y * 10\n");
+	IRInterpreter interp(ir);
+	CHECK(std::get<int64_t>(interp.call("test")) == 12);
+}
+
+TEST_CASE("a class or engine typed local starts null and takes an instance") {
+	CHECK_NOTHROW(compile_to_ir(
+			"class Def:\n"
+			"\tvar n = 1\n"
+			"func f(c):\n"
+			"\tvar d: Def = null\n"
+			"\tif c:\n"
+			"\t\td = Def.new()\n"
+			"\tvar s: Node3D = null\n"
+			"\ts = Node3D.new()\n"
+			"\treturn [d, s]\n"));
+}
+
+TEST_CASE("an Array literal fills a packed array slot") {
+	const IRProgram ir = compile_to_ir(
+			"var lines: PackedStringArray = []\n"
+			"func f():\n"
+			"\tvar local: PackedStringArray = [\"a\"]\n"
+			"\treturn [lines, local]\n");
+	int conversions = 0;
+	for (const IRFunction &func : ir.functions) {
+		for (const IRInstruction &instr : func.instructions) {
+			conversions += instr.opcode == IROpcode::MAKE_PACKED_STRING_ARRAY;
+		}
+	}
+	for (const IRInstruction &instr : ir.member_init.instructions) {
+		conversions += instr.opcode == IROpcode::MAKE_PACKED_STRING_ARRAY;
+	}
+	CHECK(conversions == 2);
+}
+
+TEST_CASE("a bare string at file level is a comment") {
+	CHECK_NOTHROW(parse("func f():\n\tpass\n'''\nnot code: (\n'''\n"));
+}

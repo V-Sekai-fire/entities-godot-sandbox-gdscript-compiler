@@ -204,6 +204,18 @@ bool constructs_implicitly_from(IRInstruction::TypeHint from, IRInstruction::Typ
 			return from == Variant::TRANSFORM2D || from == Variant::QUATERNION ||
 				from == Variant::BASIS || from == Variant::PROJECTION;
 		case Variant::PROJECTION:  return from == Variant::TRANSFORM3D;
+		// GDScript converts an Array literal assigned to a packed array's slot.
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_STRING_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_VECTOR4_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY:
+			return from == Variant::ARRAY;
 		case Variant::ARRAY:
 			switch (from) {
 				case Variant::PACKED_BYTE_ARRAY:
@@ -663,7 +675,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 
 		{
-			if (fold_global_initializer(global.initializer.get(), ir_global)) {
+			const bool packed_from_array = constructs_implicitly_from(Variant::ARRAY, m_global_types[i]) &&
+				dynamic_cast<const ArrayLiteralExpr*>(global.initializer.get()) != nullptr;
+			if (!packed_from_array && fold_global_initializer(global.initializer.get(), ir_global)) {
 				if (m_global_traits[i] != nullptr &&
 					!(global.type_hint.nullable &&
 						ir_global.init_type == IRGlobalVar::InitType::NULL_VAL)) {
@@ -1025,6 +1039,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 		accepted_type.nullable = true;
 	}
 	const StructDecl* declared_struct = find_struct(accepted_type.sole_name());
+	// A class hint accepts null without `?`, as it does on a global and in GDScript.
+	if (declared_struct != nullptr && declared_struct->is_class && !accepted_type.is_union()) {
+		accepted_type.nullable = true;
+	}
 	const TraitDecl* declared_trait = find_trait(accepted_type.sole_name());
 	const TypeSet declared_set = type_set_from(accepted_type, stmt->line, stmt->column);
 	const bool nullable_single = declared_set.is_nullable_single();
@@ -1100,6 +1118,13 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 			// Coerce so the Variant payload matches the declared type.
 			reg = coerce_to_declared_type(reg, type, func, "variable '" + stmt->name + "'", stmt);
 			set_register_type(func, reg, type);
+		} else if (get_register_type(func, reg) == Variant::NIL) {
+			// An engine class hint is untyped here, so `= null` must not fix the slot to NIL.
+			int untyped_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(untyped_reg), IRValue::reg(reg));
+			free_register(func, reg);
+			reg = untyped_reg;
+			set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 		}
 	} else if (stmt->initializer) {
 		IRInstruction::TypeHint init_type = get_register_type(func, reg);
@@ -9792,6 +9817,10 @@ bool CodeGenerator::inline_member_accepts(IRInstruction::TypeHint obj_type,
 int CodeGenerator::gen_builtin_constant(const std::string& type, const std::string& name,
 	FunctionContext& func)
 {
+	int64_t enum_value = 0;
+	if (find_builtin_enum_value(type, name, enum_value)) {
+		return gen_int_immediate(enum_value, func);
+	}
 	const InlineConstructor* info = find_inline_constructor(type);
 	const BuiltinConstant* constant = find_builtin_constant(type, name);
 	if (info != nullptr && constant != nullptr) {

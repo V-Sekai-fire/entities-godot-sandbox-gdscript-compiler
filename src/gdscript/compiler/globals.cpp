@@ -267,6 +267,28 @@ static const HostConstant HOST_CONSTANTS[] = {
 };
 #undef GDSC_HOST_CONSTANT
 
+struct BuiltinEnum {
+	const char* type;
+	const char* name;
+	int64_t value;
+};
+
+static const BuiltinEnum BUILTIN_ENUMS[] = {
+#define GDSC_BUILTIN_ENUM(type, name, value) { #type, #name, (value) },
+#include "builtin_enums.def"
+};
+#undef GDSC_BUILTIN_ENUM
+
+bool find_builtin_enum_value(const std::string& type, const std::string& name, int64_t& value) {
+	for (const BuiltinEnum& entry : BUILTIN_ENUMS) {
+		if (type == entry.type && name == entry.name) {
+			value = entry.value;
+			return true;
+		}
+	}
+	return false;
+}
+
 static const struct { const char* class_name; const char* enum_name; } CLASS_ENUMS[] = {
 #define GDSC_CLASS_ENUM(class_name, enum_name) { #class_name, #enum_name },
 #include "class_enums.def"
@@ -346,6 +368,11 @@ bool has_builtin_constants(const std::string& type) {
 		}
 	}
 	for (const HostConstant& entry : HOST_CONSTANTS) {
+		if (type == entry.type) {
+			return true;
+		}
+	}
+	for (const BuiltinEnum& entry : BUILTIN_ENUMS) {
 		if (type == entry.type) {
 			return true;
 		}
