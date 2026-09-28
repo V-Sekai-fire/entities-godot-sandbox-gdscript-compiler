@@ -8201,6 +8201,14 @@ void CodeGenerator::register_class_constants(const Program& program) {
 			}
 			if (!fold_global_initializer(constant.default_value.get(), folded, nullptr, &decl)
 				|| folded.init_type == IRGlobalVar::InitType::RUNTIME) {
+				// GDScript allows `const t := preload(...)`, `const O: Vector3 = Vector3(...)` and
+				// read-only container literals in a class; they are evaluated where they are read.
+				const Expr* value = constant.default_value.get();
+				if (!m_extensions && (dynamic_cast<const CallExpr*>(value) != nullptr || dynamic_cast<const ArrayLiteralExpr*>(value) != nullptr ||
+					dynamic_cast<const DictionaryLiteralExpr*>(value) != nullptr)) {
+					m_call_class_constants[folded.name] = { &decl, &constant };
+					continue;
+				}
 				error_at("The constant '" + decl.name + "." + constant.name +
 					"' is not a compile-time value", constant.line, constant.column,
 					"A struct or class holds no storage of its own, so its constants have to fold. "
@@ -8222,6 +8230,16 @@ int CodeGenerator::gen_class_constant(const StructDecl& decl, const std::string&
 		auto it = m_class_constants.find(at->name + "." + name);
 		if (it != m_class_constants.end()) {
 			return gen_folded_const(it->second, func);
+		}
+		const std::unordered_map<std::string, std::pair<const StructDecl*, const StructField*>>::const_iterator call =
+			m_call_class_constants.find(at->name + "." + name);
+		if (call != m_call_class_constants.end()) {
+			const StructDecl* enclosing = m_current_class;
+			m_current_class = call->second.first;
+			int reg = gen_expr(call->second.second->default_value.get(), func);
+			m_current_class = enclosing;
+			apply_declared_type(reg, call->second.second->type_hint, func);
+			return reg;
 		}
 	}
 	return -1;

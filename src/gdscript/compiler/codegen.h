@@ -641,6 +641,8 @@ private:
 	int m_seal_global = -1;
 	// Class name -> hidden global holding the object that class evaluates to as a value.
 	std::unordered_map<std::string, int> m_class_value_globals;
+	// Class constants that do not fold (a call, a container literal), keyed 'Class.NAME'; evaluated at each read.
+	std::unordered_map<std::string, std::pair<const StructDecl*, const StructField*>> m_call_class_constants;
 	int gen_class_value_new(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
 	std::vector<std::pair<std::string, size_t>> m_pending_constructors;
 	static std::string class_value_constructor_name(const std::string& class_name, size_t arity);
