@@ -5859,6 +5859,22 @@ int CodeGenerator::gen_sealed_class_tag(int value_reg, FunctionContext& func) {
 // `obj.m(args)` on an untyped receiver: a sealed class instance calls the `m` its class
 // resolves to, anything else takes the generic VCALL. Arguments are evaluated once.
 int CodeGenerator::gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, FunctionContext& func) {
+	return gen_class_dispatch(expr->member_name, expr->arguments, obj_reg, func,
+		[&](const std::vector<int>& arg_regs) {
+			int result_reg = alloc_register(func);
+			IRInstruction vcall(IROpcode::VCALL);
+			vcall.operands.push_back(IRValue::reg(result_reg));
+			vcall.operands.push_back(IRValue::reg(obj_reg));
+			vcall.operands.push_back(ir_str(expr->member_name));
+			vcall.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+			for (int reg : arg_regs) vcall.operands.push_back(IRValue::reg(reg));
+			func.ir.instructions.push_back(std::move(vcall));
+			return result_reg;
+		});
+}
+
+int CodeGenerator::gen_class_dispatch(const std::string& method_name, const std::vector<ExprPtr>& arguments,
+	int obj_reg, FunctionContext& func, const std::function<int(const std::vector<int>&)>& fallback) {
 	struct Arm {
 		const StructDecl* decl;
 		const FunctionDecl* method;
@@ -5873,12 +5889,12 @@ int CodeGenerator::gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, F
 	for (const std::string& name : names) {
 		const StructDecl* decl = find_struct(name);
 		const StructDecl* owner = nullptr;
-		const FunctionDecl* method = find_class_method(*decl, expr->member_name, &owner);
-		if (method == nullptr || method->is_coroutine || expr->arguments.size() > method->parameters.size()) {
+		const FunctionDecl* method = find_class_method(*decl, method_name, &owner);
+		if (method == nullptr || method->is_coroutine || arguments.size() > method->parameters.size()) {
 			continue;
 		}
 		bool defaults_cover = true;
-		for (size_t i = expr->arguments.size(); i < method->parameters.size(); i++) {
+		for (size_t i = arguments.size(); i < method->parameters.size(); i++) {
 			defaults_cover = defaults_cover && method->parameters[i].default_value != nullptr;
 		}
 		if (defaults_cover) arms.push_back({decl, method, owner});
@@ -5888,7 +5904,7 @@ int CodeGenerator::gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, F
 	}
 
 	std::vector<int> arg_regs;
-	for (const ExprPtr& argument : expr->arguments) {
+	for (const ExprPtr& argument : arguments) {
 		arg_regs.push_back(gen_expr(argument.get(), func));
 	}
 	int result_reg = alloc_register(func);
@@ -5919,7 +5935,7 @@ int CodeGenerator::gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, F
 		if (!arm.method->is_static) call_regs.push_back(obj_reg);
 		call_regs.insert(call_regs.end(), arg_regs.begin(), arg_regs.end());
 		std::vector<int> default_regs;
-		for (size_t i = expr->arguments.size(); i < arm.method->parameters.size(); i++) {
+		for (size_t i = arguments.size(); i < arm.method->parameters.size(); i++) {
 			default_regs.push_back(gen_expr(arm.method->parameters[i].default_value.get(), func));
 		}
 		call_regs.insert(call_regs.end(), default_regs.begin(), default_regs.end());
@@ -5936,13 +5952,9 @@ int CodeGenerator::gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, F
 	free_register(func, tag_reg);
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(fallback_label));
-	IRInstruction vcall(IROpcode::VCALL);
-	vcall.operands.push_back(IRValue::reg(result_reg));
-	vcall.operands.push_back(IRValue::reg(obj_reg));
-	vcall.operands.push_back(ir_str(expr->member_name));
-	vcall.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
-	for (int reg : arg_regs) vcall.operands.push_back(IRValue::reg(reg));
-	func.ir.instructions.push_back(std::move(vcall));
+	int fallback_reg = fallback(arg_regs);
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(fallback_reg));
+	free_register(func, fallback_reg);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 	for (int reg : arg_regs) free_register(func, reg);
 	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
@@ -10671,6 +10683,12 @@ int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, Funct
 
 	// Struct field: validate and apply declared type.
 	if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
+		const std::string getter_name = "@" + member + "_getter";
+		const StructDecl* getter_owner = nullptr;
+		const FunctionDecl* getter = decl->is_class ? find_class_method(*decl, getter_name, &getter_owner) : nullptr;
+		if (getter != nullptr && func.ir.name != lifted_method_name(*getter_owner, getter_name)) {
+			return gen_class_method_call(*decl, *getter, *getter_owner, obj_reg, {}, NamedArguments{}, func, site);
+		}
 		if (find_struct_field(*decl, member) == nullptr && native_base(*decl) != nullptr) {
 			int base_reg = gen_native_base_load(obj_reg, func);
 			int result_reg = gen_vget(base_reg, member, func);
@@ -10682,6 +10700,18 @@ int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, Funct
 		int result_reg = gen_dict_get(obj_reg, member, func);
 		apply_declared_type(result_reg, field.type_hint, func);
 		return result_reg;
+	}
+
+	// A class getter on a value the compiler cannot type goes through the sealed dispatch.
+	if (obj_type == Variant::DICTIONARY || obj_type == IRInstruction::TypeHint_NONE) {
+		int dispatched = gen_class_dispatch("@" + member + "_getter", {}, obj_reg, func,
+			[&](const std::vector<int>&) {
+				return obj_type == Variant::DICTIONARY ? gen_dict_get(obj_reg, member, func)
+					: gen_dynamic_member_get(obj_reg, member, func);
+			});
+		if (dispatched >= 0) {
+			return dispatched;
+		}
 	}
 
 	// Dictionary: element read, not VGET (Object-only).

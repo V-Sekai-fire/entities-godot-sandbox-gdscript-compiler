@@ -852,12 +852,46 @@ StructDecl Parser::parse_class() {
 
 		const Token& field_name = consume(TokenType::IDENTIFIER, "Expected a field name");
 		field.name = field_name.lexeme;
-		field.type_hint = parse_type_hint();
+		// ':' is a type hint, or opens accessors directly on an untyped `var x:`.
+		bool accessors_follow = false;
+		if (match(TokenType::COLON)) {
+			if (at_property_accessor() || check(TokenType::NEWLINE)) {
+				accessors_follow = true;
+			} else if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
+				field.type_hint = parse_type_expr();
+			}
+		}
 
-		if (match(TokenType::ASSIGN)) {
+		if (!accessors_follow && match(TokenType::ASSIGN)) {
 			field.default_value = parse_expression();
 		}
-		consume_statement_end("Expected newline after the field declaration");
+		// `var x: T:` + `get:` lifts the getter to the method `@x_getter`; reads call it.
+		if (accessors_follow || match(TokenType::COLON)) {
+			VarDeclStmt accessors(field.name);
+			parse_property_accessors(accessors);
+			if (accessors.setter_body || !accessors.setter_name.empty()) {
+				error("A class field setter is not supported yet", field.line, field.column);
+			}
+			if (accessors.getter_body) {
+				accessors.getter_body->name = "@" + field.name + "_getter";
+				decl.methods.push_back(std::move(*accessors.getter_body));
+			} else if (!accessors.getter_name.empty()) {
+				FunctionDecl getter;
+				getter.name = "@" + field.name + "_getter";
+				getter.line = field.line;
+				getter.column = field.column;
+				std::unique_ptr<CallExpr> call = std::make_unique<CallExpr>(accessors.getter_name, std::vector<ExprPtr>{});
+				call->line = field.line;
+				call->column = field.column;
+				std::unique_ptr<ReturnStmt> ret = std::make_unique<ReturnStmt>(std::move(call));
+				ret->line = field.line;
+				ret->column = field.column;
+				getter.body.push_back(std::move(ret));
+				decl.methods.push_back(std::move(getter));
+			}
+		} else {
+			consume_statement_end("Expected newline after the field declaration");
+		}
 
 		if (decl.find_field(field.name) != nullptr || decl.find_constant(field.name) != nullptr) {
 			throw CompilerException::parser_error(
@@ -1404,7 +1438,7 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 void Parser::parse_property_accessors(VarDeclStmt& decl) {
 	const bool block = check(TokenType::NEWLINE);
 	if (block) {
-		advance();
+		skip_newlines();
 		consume(TokenType::INDENT, "Expected an indented block of property accessors");
 	}
 
@@ -2024,6 +2058,10 @@ ExprPtr Parser::parse_expression_impl() {
 			const Expr& start = *expr;
 			expr = make_like<CastExpr>(start, std::move(expr), type_name,
 				std::move(type_arguments));
+			if (continues_after_cast()) {
+				m_pending_primary = std::move(expr);
+				expr = parse_ternary();
+			}
 			continue;
 		}
 		// A cast is the only expression `??` can meet here: everything else was
@@ -2037,6 +2075,23 @@ ExprPtr Parser::parse_expression_impl() {
 	}
 
 	return expr;
+}
+
+// GDScript keeps parsing infix operators after a cast: `x as T != null`, `x as T if c else d`.
+bool Parser::continues_after_cast() const {
+	switch (peek().type) {
+		case TokenType::PLUS: case TokenType::MINUS: case TokenType::MULTIPLY: case TokenType::POWER:
+		case TokenType::DIVIDE: case TokenType::MODULO: case TokenType::BIT_AND: case TokenType::BIT_OR:
+		case TokenType::BIT_XOR: case TokenType::SHIFT_LEFT: case TokenType::SHIFT_RIGHT:
+		case TokenType::EQUAL: case TokenType::NOT_EQUAL: case TokenType::LESS: case TokenType::LESS_EQUAL:
+		case TokenType::GREATER: case TokenType::GREATER_EQUAL: case TokenType::AND: case TokenType::OR:
+		case TokenType::IN: case TokenType::IS: case TokenType::IF:
+			return true;
+		case TokenType::NOT:
+			return peek_ahead(1).type == TokenType::IN;
+		default:
+			return false;
+	}
 }
 
 ExprPtr Parser::parse_ternary() {
@@ -2089,7 +2144,7 @@ ExprPtr Parser::parse_and_expression() {
 
 ExprPtr Parser::parse_not() {
 	// `not` binds looser than comparison: `not a == b` is `not (a == b)`.
-	if (match(TokenType::NOT)) {
+	if (!m_pending_primary && match(TokenType::NOT)) {
 		const Token& op = previous();
 		return make_at<UnaryExpr>(op, UnaryExpr::Op::NOT, parse_not());
 	}
@@ -2240,6 +2295,11 @@ ExprPtr Parser::parse_factor() {
 }
 
 ExprPtr Parser::parse_unary() {
+	// A finished cast is the operand here. Before the `not` check: in `x as T not in a`
+	// the next token is that `not`, which parse_not leaves alone while a cast is pending.
+	if (m_pending_primary) {
+		return parse_call();
+	}
 	// Prefix not is also legal after a tighter binary operator.
 	if (check(TokenType::NOT)) return parse_not();
 	// `await` at unary precedence, matching GDScript.
@@ -2440,6 +2500,9 @@ ExprPtr Parser::parse_lambda() {
 }
 
 ExprPtr Parser::parse_primary() {
+	if (m_pending_primary) {
+		return std::move(m_pending_primary);
+	}
 	if (check(TokenType::FUNC)) {
 		return parse_lambda();
 	}

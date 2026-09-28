@@ -163,6 +163,9 @@ private:
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;
 	int m_compound_temps = 0;
+	// A finished `x as T` that the operators after it take as their left operand.
+	ExprPtr m_pending_primary;
+	bool continues_after_cast() const;
 	// Tracks `await` in the current function body.
 	bool m_saw_await = false;
 	int m_inline_suite_depth = 0;

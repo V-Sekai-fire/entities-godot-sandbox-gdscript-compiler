@@ -96,3 +96,48 @@ TEST_CASE("a call on its own is still not an assignment target") {
 							"\tg() += 1\n"),
 					CompilerException);
 }
+
+static const Expr *returned(const Program &program) {
+	const ReturnStmt *ret = dynamic_cast<const ReturnStmt *>(program.functions.front().body.back().get());
+	REQUIRE(ret != nullptr);
+	return ret->value.get();
+}
+
+TEST_CASE("operators after a cast take the cast as their left operand") {
+	const Program compared = parse("func f(n):\n\treturn n as Node3D != null\n");
+	const BinaryExpr *ne = dynamic_cast<const BinaryExpr *>(returned(compared));
+	REQUIRE(ne != nullptr);
+	CHECK(dynamic_cast<const CastExpr *>(ne->left.get()) != nullptr);
+
+	const Program joined = parse("func f(n, c):\n\treturn n as Node3D == null and c\n");
+	const BinaryExpr *both = dynamic_cast<const BinaryExpr *>(returned(joined));
+	REQUIRE(both != nullptr);
+	const BinaryExpr *eq = dynamic_cast<const BinaryExpr *>(both->left.get());
+	REQUIRE(eq != nullptr);
+	CHECK(dynamic_cast<const CastExpr *>(eq->left.get()) != nullptr);
+
+	CHECK_NOTHROW(compile_to_ir("func f(n, c):\n\treturn n as Node3D if c else null\n"));
+	CHECK_NOTHROW(compile_to_ir("func f(n):\n\treturn n as int - 1\n"));
+
+	// `not in` after a cast, beside the prefix `not` a tighter operator may take.
+	const Program excluded = parse("func f(x):\n\treturn x as int not in [1, 2]\n");
+	const UnaryExpr *negated = dynamic_cast<const UnaryExpr *>(returned(excluded));
+	REQUIRE(negated != nullptr);
+	const BinaryExpr *in = dynamic_cast<const BinaryExpr *>(negated->operand.get());
+	REQUIRE(in != nullptr);
+	CHECK(dynamic_cast<const CastExpr *>(in->left.get()) != nullptr);
+	CHECK_NOTHROW(compile_to_ir("func f(x):\n\treturn x as int not in [1, 2]\n"));
+}
+
+TEST_CASE("a class getter on an untyped field, below comment lines") {
+	CHECK_NOTHROW(compile_to_ir(
+			"class A:\n"
+			"\tvar keys = {}\n"
+			"\tvar coefficients:\n"
+			"\t\tget:\n"
+			"\t\t\treturn keys.get(\"c\", [])\n"
+			"\tvar flag: bool:\n"
+			"\t\t# a note\n"
+			"\t\tget:\n"
+			"\t\t\treturn true\n"));
+}

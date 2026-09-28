@@ -120,3 +120,51 @@ TEST_CASE("a program without classes carries no seal") {
 	const IRProgram ir = compile_to_ir("func f(c):\n\treturn c.name()\n");
 	CHECK(seal_index(ir) == -1);
 }
+
+static const std::string GETTERS =
+		"class Asset:\n"
+		"\tvar _cache = \"\"\n"
+		"\tvar key: String:\n"
+		"\t\tget:\n"
+		"\t\t\tif _cache.is_empty():\n"
+		"\t\t\t\t_cache = \"k\"\n"
+		"\t\t\treturn _cache\n"
+		"\tvar own: int = 3:\n"
+		"\t\tget:\n"
+		"\t\t\treturn own + 1\n"
+		"\tfunc describe():\n"
+		"\t\treturn key\n"
+		"func typed():\n"
+		"\tvar a := Asset.new()\n"
+		"\treturn a.key\n"
+		"func untyped(a):\n"
+		"\treturn a.key\n"
+		"func plain(d):\n"
+		"\treturn d.other\n";
+
+TEST_CASE("a class getter is called for every read of its field") {
+	const IRProgram ir = compile_to_ir(GETTERS);
+	const std::vector<std::string> typed_calls = called(ir, find_function(ir, "typed"));
+	CHECK(std::find(typed_calls.begin(), typed_calls.end(), "@Asset.@key_getter") != typed_calls.end());
+
+	const std::vector<std::string> self_calls = called(ir, find_function(ir, "@Asset.describe"));
+	CHECK(self_calls == std::vector<std::string>{ "@Asset.@key_getter" });
+
+	const std::vector<std::string> untyped_calls = called(ir, find_function(ir, "untyped"));
+	CHECK(untyped_calls == std::vector<std::string>{ "@Asset.@key_getter" });
+
+	CHECK(called(ir, find_function(ir, "plain")).empty());
+}
+
+TEST_CASE("inside its own getter a field reads its storage") {
+	const IRProgram ir = compile_to_ir(GETTERS);
+	CHECK(called(ir, find_function(ir, "@Asset.@own_getter")).empty());
+}
+
+TEST_CASE("a class field setter is refused, not ignored") {
+	Lexer lexer("class A:\n\tvar x: int:\n\t\tset(v):\n\t\t\tpass\n");
+	lexer.set_extensions(false);
+	Parser parser(lexer.tokenize());
+	parser.set_extensions(false);
+	CHECK_THROWS(parser.parse());
+}
