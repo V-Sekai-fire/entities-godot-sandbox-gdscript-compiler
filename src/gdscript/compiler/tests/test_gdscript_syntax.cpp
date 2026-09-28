@@ -236,3 +236,25 @@ TEST_CASE("a float stored in an int variable is truncated in GDScript") {
 	CHECK_NOTHROW(compile_to_ir(narrowing));
 	CHECK_THROWS(compile_to_ir(narrowing, true));
 }
+
+TEST_CASE("a class constant that does not fold is built where it is read in GDScript") {
+	const std::string source =
+			"class Importer:\n"
+			"\tconst MODES: Dictionary = {0: 30, 1: 120}\n"
+			"\tconst OFFSET: Vector3 = Vector3(300, 100, 0)\n"
+			"\tfunc fps(mode):\n"
+			"\t\treturn MODES[mode]\n"
+			"func offset():\n"
+			"\treturn Importer.OFFSET\n";
+	const IRProgram ir = compile_to_ir(source);
+	int dictionaries = 0;
+	for (const IRFunction &func : ir.functions) {
+		if (func.name == "@Importer.fps") {
+			for (const IRInstruction &instr : func.instructions) {
+				dictionaries += instr.opcode == IROpcode::MAKE_DICTIONARY;
+			}
+		}
+	}
+	CHECK(dictionaries == 1);
+	CHECK_THROWS(compile_to_ir(source, true));
+}

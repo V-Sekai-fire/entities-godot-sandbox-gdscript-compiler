@@ -651,6 +651,8 @@ private:
 	std::unordered_map<std::string, int> m_class_value_globals;
 	// The class value globals some code reads; only those are created at startup.
 	std::unordered_set<int> m_class_values_used;
+	// Class constants that do not fold (a call, a container literal), keyed 'Class.NAME'; evaluated at each read.
+	std::unordered_map<std::string, std::pair<const StructDecl*, const StructField*>> m_call_class_constants;
 	int gen_class_value_new(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
 	std::vector<std::pair<std::string, size_t>> m_pending_constructors;
 	static std::string class_value_constructor_name(const std::string& class_name, size_t arity);
