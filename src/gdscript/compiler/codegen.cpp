@@ -3141,9 +3141,6 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		std::string continue_label = make_label("for_continue");
 		std::string end_label = make_label("for_end");
 
-		func.loops.push_back({end_label, continue_label});
-		push_scope(func);
-
 		// Packed arrays use VCALL size()/get(); ECALL_ARRAY_SIZE/AT are Array-only.
 		const bool packed_walk = is_packed_array_type(get_register_type(func, array_reg));
 
@@ -3172,6 +3169,11 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			gen_array_walk(stmt, array_reg, func, iterable_element, iterable_trait);
 			return;
 		}
+
+		// After the walks above, which push their own loop: pushing first left this entry behind,
+		// and a later `continue` in the enclosing loop jumped to a label nothing emits.
+		func.loops.push_back({end_label, continue_label});
+		push_scope(func);
 
 		// Float joins the int arm: ceil(f) replaces the bound before the loop.
 		int is_float_reg = -1;
