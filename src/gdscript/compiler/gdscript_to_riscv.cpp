@@ -44,6 +44,7 @@ static void print_usage(const char* program) {
 		"  -l, --program-headers  Show `readelf -l` instead of the disassembly\n"
 		"      --no-optimize      Skip the optimizer (alias: --no-opt)\n"
 		"      --check            Diagnostics only; exit 1 when the script has errors\n"
+		"      --extensions       Allow SafeGDScript extensions (struct, trait, `?`, unions, @test)\n"
 		"      --strip-tests      Leave @test functions out, as a shipping build does\n"
 		"      --profiling        Emit self-instrumentation (wall clock)\n"
 		"      --profiling-instructions  The same, counting instructions\n"
@@ -70,6 +71,7 @@ int main(int argc, char** argv)
 	bool profiling = false;
 	bool strip_tests = false;
 	bool check_only = false;
+	bool extensions = false;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -130,6 +132,8 @@ int main(int argc, char** argv)
 			strip_tests = true;
 		} else if (arg == "--check") {
 			check_only = true;
+		} else if (arg == "--extensions") {
+			extensions = true;
 		} else if (arg == "--help" || arg == "-h") {
 			print_usage(argv[0]);
 			return 0;
@@ -161,6 +165,7 @@ int main(int argc, char** argv)
 	if (check_only) {
 		CompilerOptions options;
 		options.optimize = !no_optimize;
+		options.extensions = extensions;
 		options.double_precision = double_precision;
 		options.emit_tests = !strip_tests;
 		options.autoloads = autoloads;
@@ -176,6 +181,7 @@ int main(int argc, char** argv)
 		CompilerOptions options;
 		options.output_elf = true;
 		options.optimize = !no_optimize;
+		options.extensions = extensions;
 		options.double_precision = double_precision;
 		options.profiling = profiling;
 		// What a shipping build produces: no @test function reaches codegen.

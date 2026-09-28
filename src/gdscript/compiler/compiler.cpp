@@ -72,7 +72,9 @@ void import_native_bases(Program &program, const CompilerOptions &options) {
 		if (visiting.size() >= MAX_CHAIN_DEPTH) throw std::runtime_error("Script inheritance is too deep");
 		visiting.insert(loaded.path);
 		Lexer lexer(loaded.source);
+		lexer.set_extensions(options.extensions);
 		Parser parser(lexer.tokenize());
+		parser.set_extensions(options.extensions);
 		auto parsed = parser.parse();
 		apply_traits(parsed);
 		StructDecl decl;
@@ -144,6 +146,7 @@ std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, cons
 		}
 
 		Lexer lexer(source);
+		lexer.set_extensions(options.extensions);
 		auto tokens = lexer.tokenize();
 
 		if (options.dump_tokens) {
@@ -155,6 +158,7 @@ std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, cons
 		}
 
 		Parser parser(tokens);
+		parser.set_extensions(options.extensions);
 		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
 		m_warnings = parser.warnings();
@@ -170,7 +174,9 @@ std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, cons
 			for (size_t i = options.base_sources.size(); i-- > 0;) {
 				const CompilerOptions::BaseSource& base = options.base_sources[i];
 				Lexer base_lexer(base.source);
+				base_lexer.set_extensions(options.extensions);
 				Parser base_parser(base_lexer.tokenize());
+				base_parser.set_extensions(options.extensions);
 				base_parser.set_doc_comments(base_lexer.doc_comments());
 				ChainLink link;
 				link.name = base.name;

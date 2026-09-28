@@ -472,6 +472,7 @@ static const ClassSignature &find_published_class(const Compiler &compiler,
 
 TEST_CASE("file level trait sources") {
 	CompilerOptions options;
+	options.extensions = true;
 	options.base_sources.push_back(CompilerOptions::BaseSource{
 			"Movable", "movable.sgd",
 			"trait_name Movable\n"
@@ -492,6 +493,7 @@ TEST_CASE("file level trait sources") {
 
 TEST_CASE("transitive file level trait sources") {
 	CompilerOptions options;
+	options.extensions = true;
 	options.base_sources.push_back(CompilerOptions::BaseSource{
 			"Powered", "powered.sgd",
 			"trait_name Powered\n"
@@ -523,6 +525,7 @@ TEST_CASE("two qualified traits from one provider") {
 			"trait Beta:\n\tfunc beta() -> int: return 20\n"
 			"trait Unused:\n\tfunc unused() -> int: return 30\n";
 	CompilerOptions options;
+	options.extensions = true;
 	// The host emits one trait-only source request per qualified name. Repeating
 	// the provider must expose both names without declaring Unused twice.
 	options.base_sources.push_back(CompilerOptions::BaseSource{

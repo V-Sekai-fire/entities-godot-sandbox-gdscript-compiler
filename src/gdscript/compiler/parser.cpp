@@ -209,6 +209,10 @@ Program Parser::parse() {
 			saw_declaration = true;
 		} else if (check(TokenType::CLASS)) {
 			program.structs.push_back(parse_class());
+			for (StructDecl& nested : m_nested_classes) {
+				program.structs.push_back(std::move(nested));
+			}
+			m_nested_classes.clear();
 			saw_declaration = true;
 		} else if (check(TokenType::ENUM)) {
 			program.enums.push_back(parse_enum());
@@ -759,6 +763,12 @@ StructDecl Parser::parse_class() {
 
 		if (match(TokenType::PASS)) {
 			consume_statement_end("Expected newline after 'pass'");
+			continue;
+		}
+
+		// A nested class is hoisted to file scope under its own name; the outer body refers to it bare.
+		if (check(TokenType::CLASS)) {
+			m_nested_classes.push_back(parse_class());
 			continue;
 		}
 
@@ -2675,6 +2685,9 @@ TypeExpr Parser::parse_type_expr() {
 
 	member();
 	while (match(TokenType::BIT_OR)) {
+		if (!m_extensions) {
+			error("Union types are a SafeGDScript extension, not GDScript; enable them with --extensions");
+		}
 		if (!check(TokenType::IDENTIFIER) && !check(TokenType::NULL_VAL)) {
 			error("Expected a type name or 'null' after '|'");
 		}
@@ -2871,6 +2884,10 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 		return false;
 	}
 	if (name.lexeme == "requires_host_hook") {
+		if (!m_extensions) {
+			error("@requires_host_hook is a SafeGDScript extension, not GDScript; enable it with --extensions", name.line, name.column);
+			return false;
+		}
 		if (requires_host_hook == nullptr) {
 			error("@requires_host_hook is only supported on a file-level instance function", name.line, name.column);
 			return false;
@@ -2883,6 +2900,10 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 		return false;
 	}
 	if (name.lexeme == "test") {
+		if (!m_extensions) {
+			error("@test is a SafeGDScript extension, not GDScript; enable it with --extensions", name.line, name.column);
+			return false;
+		}
 		if (is_test == nullptr) {
 			error("@test is for a file-level function", name.line, name.column);
 			return false;

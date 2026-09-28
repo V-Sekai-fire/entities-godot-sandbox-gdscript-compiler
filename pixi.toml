@@ -1,0 +1,22 @@
+[workspace]
+name = "entities-godot-sandbox-gdscript-compiler"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
+
+# The workspace LLVM pin (bootstrap's build feature); compiler-rt carries the
+# ASan/UBSan runtimes the test targets link.
+[dependencies]
+clangxx = "==22.1.5"
+lld = "==22.1.5"
+compiler-rt = "==22.1.5"
+cmake = ">=3.28"
+ninja = "*"
+
+[activation.env]
+CC = "clang"
+CXX = "clang++"
+
+[tasks]
+configure = "cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_LINKER_TYPE=LLD"
+build = { cmd = "cmake --build build --parallel", depends-on = ["configure"] }
+test = { cmd = "ctest --test-dir build -j8 --output-on-failure", depends-on = ["build"] }

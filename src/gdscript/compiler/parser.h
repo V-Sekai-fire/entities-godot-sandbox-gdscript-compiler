@@ -14,6 +14,7 @@ namespace gdscript {
 class Parser {
 public:
 	explicit Parser(std::vector<Token> tokens);
+	void set_extensions(bool enabled) { m_extensions = enabled; }
 
 	// Optional; without doc comments every description is empty.
 	void set_doc_comments(std::vector<std::pair<int, std::string>> comments);
@@ -156,6 +157,8 @@ private:
 	DiagnosticSink* m_diagnostics = nullptr;
 	std::vector<ParseDiagnostic> m_warnings;
 	std::vector<Token> m_tokens;
+	std::vector<StructDecl> m_nested_classes;
+	bool m_extensions = true;
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;
 	// Tracks `await` in the current function body.
