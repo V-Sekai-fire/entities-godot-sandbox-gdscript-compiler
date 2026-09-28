@@ -1,6 +1,7 @@
 // GDScript that Godot accepts and the compiler has to as well: nested classes,
 // expression statements, and compound assignment into call results.
 #include "../codegen.h"
+#include "../compiler.h"
 #include "../compiler_exception.h"
 #include "../ir_interpreter.h"
 #include "../ir_optimizer.h"
@@ -257,4 +258,23 @@ TEST_CASE("a class constant that does not fold is built where it is read in GDSc
 	}
 	CHECK(dictionaries == 1);
 	CHECK_THROWS(compile_to_ir(source, true));
+}
+
+TEST_CASE("continue after a nested typed-array loop reaches the outer loop") {
+	Compiler compiler;
+	CompilerOptions options;
+	const std::vector<uint8_t> elf = compiler.compile(
+			"func f(outer: Array):\n"
+			"\tvar n = 0\n"
+			"\tfor a in outer:\n"
+			"\t\tvar inner: Array = a\n"
+			"\t\tfor b in inner:\n"
+			"\t\t\tn += 1\n"
+			"\t\tif n > 3:\n"
+			"\t\t\tcontinue\n"
+			"\t\tn += 10\n"
+			"\treturn n\n",
+			options);
+	CAPTURE(compiler.get_error());
+	CHECK_FALSE(elf.empty());
 }
