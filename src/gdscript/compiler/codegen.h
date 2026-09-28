@@ -200,6 +200,8 @@ private:
 	int gen_range(const CallExpr* expr, FunctionContext& func);
 	int gen_color8(const CallExpr* expr, FunctionContext& func);
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
+	int gen_sealed_class_tag(int value_reg, FunctionContext& func);
+	int gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
 	int gen_instance_class_test(int value_reg, const std::string& class_name, int result_reg,
 		FunctionContext& func);
 	int gen_cast(const CastExpr* expr, FunctionContext& func);
@@ -634,6 +636,11 @@ private:
 	std::vector<const TraitDecl*> m_global_array_element_traits;
 	std::vector<const TraitDecl*> m_global_dictionary_value_traits;
 	std::vector<bool> m_global_holds_object;
+	// Index of the hidden `@seal` global, or -1 when the program declares no class.
+	int m_seal_global = -1;
+	// Whether any code reads the seal; only then does global init create it.
+	bool m_seal_used = false;
+	void prepend_global_object(IRProgram& ir_program, int global_index, const char* class_name);
 
 	bool type_hint_names_a_class(const std::string& type_hint) const;
 	void mark_global_holds_object(int64_t global_idx);
