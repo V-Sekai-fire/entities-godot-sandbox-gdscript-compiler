@@ -20,6 +20,7 @@ TEST_CASE("the frontend means the same thing optimized or not") {
 	Compiler compiler;
 	for (bool optimize : { false, true }) {
 		CompilerOptions options;
+		options.extensions = true;
 		options.optimize = optimize;
 		auto ir = compiler.compile_to_ir(EXAMPLE, options);
 		REQUIRE_MESSAGE(ir.has_value(), compiler.get_error());
@@ -59,6 +60,7 @@ TEST_CASE("an empty source succeeds and says nothing went wrong") {
 TEST_CASE("a shipping build drops the tests") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.emit_tests = false;
 	auto shipping = compiler.compile_to_ir(
 			"@test\nfunc check_answer():\n\tpass\nfunc answer():\n\treturn 42\n", options);
@@ -72,6 +74,7 @@ TEST_CASE("a shipping build drops the tests") {
 TEST_CASE("a base script is merged, and a restricted build refuses one") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.base_sources.push_back({ "Base", "res://base.sgd",
 									 "func inherited() -> int:\n\treturn 42\n", false });
 	auto derived = compiler.compile_to_ir(

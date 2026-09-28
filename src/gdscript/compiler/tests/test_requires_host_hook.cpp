@@ -44,6 +44,7 @@ TEST_CASE("parser checks") {
 TEST_CASE("metadata and contract checks") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.emit_tests = false; // Requirements survive shipping builds.
 	REQUIRE(!compiler.compile(hook_source, options).empty());
 	const auto functions = compiler.get_function_signatures();
@@ -105,6 +106,7 @@ TEST_CASE("metadata and contract checks") {
 TEST_CASE("inherited requirement") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.base_sources.push_back({ "BaseMod", "base.sgd", "class_name BaseMod\n" + hook_source, false });
 	REQUIRE(!compiler.compile("extends BaseMod\n", options).empty());
 	bool found = false;

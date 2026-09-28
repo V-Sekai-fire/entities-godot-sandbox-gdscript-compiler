@@ -807,6 +807,7 @@ TEST_CASE("struct signatures") {
 
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = false;
 	compiler.compile(
 			"struct Point:\n\tvar x: int = 0\n\n"
@@ -1045,6 +1046,7 @@ TEST_CASE("struct check levels") {
 	auto compiled = [&](bool restricted) {
 		Compiler compiler;
 		CompilerOptions options;
+		options.extensions = true;
 		options.restricted = restricted;
 		options.struct_checks = CompilerOptions::StructChecks::OFF;
 		const std::vector<uint8_t> elf = compiler.compile(source, options);

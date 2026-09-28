@@ -31,10 +31,17 @@ Upstream paths are kept, so the compiler lives at
 
 ```bash
 git clone --recurse-submodules https://github.com/V-Sekai-fire/entities-godot-sandbox-gdscript-compiler
-cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build build --parallel
-cd build && ctest --output-on-failure
+pixi run test
 ```
+
+`pixi.toml` pins the workspace LLVM (clang, lld and compiler-rt 22.1.5), so
+`pixi run build` and `pixi run test` configure, build and test with the same
+toolchain everywhere.
+
+The compiler accepts plain GDScript by default. The SafeGDScript extensions
+(`struct`, `trait`, `uses`, `switch`, `?` types and operators, union types,
+`@test` and `@requires_host_hook`) are opt-in: `--extensions` on the command
+line, `CompilerOptions::extensions` from code.
 
 `ext/libriscv`, `ext/doctest` and `ext/witness-cpp` are submodules. Without
 libriscv the build skips the tests that run generated code on a real RISC-V

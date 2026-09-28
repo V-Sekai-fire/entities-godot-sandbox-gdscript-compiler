@@ -331,9 +331,13 @@ struct ModelBuilder {
 		return 1;
 	}
 
+	uint32_t warning_count = 0;
+	uint32_t error_count = 0;
+
 	void warn(const char *code, const std::string &message, int line, int column, size_t width = 1) {
 		if (!warnings_wanted) return;
-		if (model.diagnostics.size() >= MAX_DIAGNOSTICS) return;
+		if (warning_count >= MAX_DIAGNOSTICS) return;
+		warning_count++;
 		const uint32_t start = uint32_t(std::max(column, 1));
 		model.diagnostics.push_back({DiagnosticSeverity::WARNING, code, message, model.path,
 			{uint32_t(std::max(line, 1)), start, uint32_t(std::max(line, 1)),
@@ -342,7 +346,8 @@ struct ModelBuilder {
 
 	void fail(const std::string &code, const std::string &message, int line, int column,
 			size_t width = 1) {
-		if (model.diagnostics.size() >= MAX_DIAGNOSTICS) return;
+		if (error_count >= MAX_DIAGNOSTICS) return;
+		error_count++;
 		const uint32_t start = uint32_t(std::max(column, 1));
 		model.diagnostics.push_back({DiagnosticSeverity::ERROR, code, message, model.path,
 			{uint32_t(std::max(line, 1)), start, uint32_t(std::max(line, 1)),
@@ -1369,6 +1374,7 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 	std::vector<Token> tokens;
 	Lexer lexer(source);
 	lexer.set_diagnostics(&sink);
+	lexer.set_extensions((flags & ANALYZE_EXTENSIONS) != 0);
 	try {
 		tokens = lexer.tokenize();
 	} catch (...) {
@@ -1379,6 +1385,7 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 	std::vector<std::pair<int, std::string>> doc_comments = lexer.doc_comments();
 	if (!tokens.empty()) {
 		Parser parser(tokens);
+		parser.set_extensions((flags & ANALYZE_EXTENSIONS) != 0);
 		parser.set_doc_comments(std::move(doc_comments));
 		parser.set_diagnostics(&sink);
 		try {
@@ -1456,8 +1463,14 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 				}), model.diagnostics.end());
 	}
 	if ((flags & ANALYZE_DIAGNOSTICS) != 0 && model.diagnostics.size() >= MAX_DIAGNOSTICS) {
+		// Warnings are dropped before errors so the cap never turns a warning-only file into a failure.
+		std::stable_partition(model.diagnostics.begin(), model.diagnostics.end(),
+				[](const SourceDiagnostic &d) { return d.severity == DiagnosticSeverity::ERROR; });
+		const bool errors_overflow = model.diagnostics[MAX_DIAGNOSTICS - 2].severity == DiagnosticSeverity::ERROR;
 		model.diagnostics.resize(MAX_DIAGNOSTICS - 1);
-		model.diagnostics.push_back({DiagnosticSeverity::ERROR, "TOO_MANY_ERRORS", "Too many errors",
+		model.diagnostics.push_back({errors_overflow ? DiagnosticSeverity::ERROR : DiagnosticSeverity::WARNING,
+			errors_overflow ? "TOO_MANY_ERRORS" : "TOO_MANY_WARNINGS",
+			errors_overflow ? "Too many errors" : "Too many warnings",
 			model.path, {uint32_t(lines.size()), 1, uint32_t(lines.size()), 2}});
 	}
 	if ((flags & ANALYZE_CARET) != 0 && caret_line > 0 && size_t(caret_line) <= lines.size()) {

@@ -200,6 +200,7 @@ TEST_CASE("reflection") {
 
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = false;
 	compiler.compile(
 			"@export var value: Vector2?\n"
@@ -373,6 +374,7 @@ TEST_CASE("if var null only binding") {
 
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = false;
 	compiler.compile(
 			"func f(x):\n"

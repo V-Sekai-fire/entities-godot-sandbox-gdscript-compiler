@@ -21,6 +21,7 @@ using namespace gdscript;
 static CompilerError failing_compile(const std::string &source) {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = true;
 	const std::vector<uint8_t> elf = compiler.compile(source, options);
 	REQUIRE((elf.empty() && "expected this program to fail to compile"));
@@ -141,6 +142,7 @@ TEST_CASE("too many parameters is refused") {
 TEST_CASE("a script class outside the program") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.global_script_classes.emplace_back("Other", "res://other.gd");
 
 	REQUIRE(!compiler.compile("func f():\n\treturn Other.helper()\n", options).empty());
