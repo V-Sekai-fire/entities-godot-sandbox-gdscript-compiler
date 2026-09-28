@@ -267,6 +267,7 @@ int main(int argc, char** argv)
 		if (!program.chain.merged()) apply_traits(program);
 
 		CodeGenerator codegen;
+		codegen.set_extensions(extensions);
 		codegen.set_autoloads(autoloads);
 		codegen.set_global_script_classes(global_classes);
 		IRProgram ir = codegen.generate(program);

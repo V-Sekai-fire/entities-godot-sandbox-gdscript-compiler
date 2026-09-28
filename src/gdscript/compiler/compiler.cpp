@@ -262,6 +262,7 @@ std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, cons
 		}
 		CodeGenerator codegen;
 		codegen.set_native_classes(options.native_classes);
+		codegen.set_extensions(options.extensions);
 		codegen.set_dropped_tests(dropped_tests);
 		codegen.set_restricted(options.restricted);
 		codegen.set_batch_iteration(options.batch_iteration);
