@@ -695,9 +695,9 @@ TEST_CASE("a class typed member holds null") {
 	check(compile_error(source).empty(), "both spellings of a nullable class member compile");
 
 	const IRProgram ir = compile_to_ir(source);
-	check(ir.globals.size() == 4, "the three members and the seal are declared");
+	check(ir.globals.size() == 5, "the three members, the seal and TestData's class value are declared");
 	for (const IRGlobalVar &global : ir.globals) {
-		if (global.name == "@seal") {
+		if (global.name[0] == '@') {
 			continue;
 		}
 		check(global.init_type == IRGlobalVar::InitType::NULL_VAL,

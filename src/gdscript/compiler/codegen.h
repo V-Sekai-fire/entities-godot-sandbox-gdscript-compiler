@@ -647,6 +647,14 @@ private:
 	// Whether any code reads the seal; only then does global init create it.
 	bool m_seal_used = false;
 	void prepend_global_object(IRProgram& ir_program, int global_index, const char* class_name);
+	// Class name -> hidden global holding the object that class evaluates to as a value.
+	std::unordered_map<std::string, int> m_class_value_globals;
+	// The class value globals some code reads; only those are created at startup.
+	std::unordered_set<int> m_class_values_used;
+	int gen_class_value_new(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
+	std::vector<std::pair<std::string, size_t>> m_pending_constructors;
+	static std::string class_value_constructor_name(const std::string& class_name, size_t arity);
+	IRFunction generate_class_value_constructor(const StructDecl& decl, size_t arity);
 
 	bool type_hint_names_a_class(const std::string& type_hint) const;
 	void mark_global_holds_object(int64_t global_idx);

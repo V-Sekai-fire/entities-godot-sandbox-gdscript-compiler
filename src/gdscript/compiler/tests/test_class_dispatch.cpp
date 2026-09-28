@@ -168,3 +168,46 @@ TEST_CASE("a class field setter is refused, not ignored") {
 	parser.set_extensions(false);
 	CHECK_THROWS(parser.parse());
 }
+
+static int global_index(const IRProgram &ir, const std::string &name) {
+	for (size_t i = 0; i < ir.globals.size(); i++) {
+		if (ir.globals[i].name == name) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+static const std::string VALUES =
+		"var maker = null\n"
+		"class Sentinel:\n"
+		"\tvar n = 0\n"
+		"class Box:\n"
+		"\tvar inner = maker.new()\n"
+		"class Pair:\n"
+		"\tvar a\n"
+		"\tfunc _init(x):\n"
+		"\t\ta = x\n"
+		"func as_value():\n"
+		"\treturn Sentinel\n"
+		"func make(c):\n"
+		"\treturn c.new()\n"
+		"func is_sentinel(x):\n"
+		"\treturn x == Sentinel\n";
+
+TEST_CASE("a class used as a value is its own object, and .new() on it builds the class") {
+	const IRProgram ir = compile_to_ir(VALUES);
+	const int sentinel = global_index(ir, "@class:Sentinel");
+	REQUIRE(sentinel >= 0);
+	CHECK(ir.globals[size_t(sentinel)].holds_object);
+	CHECK(loads_global(find_function(ir, "as_value"), sentinel));
+	CHECK(loads_global(find_function(ir, "is_sentinel"), sentinel));
+
+	const std::vector<std::string> made = called(ir, find_function(ir, "make"));
+	CHECK(std::find(made.begin(), made.end(), "@Sentinel.@new0") != made.end());
+	CHECK(std::find(made.begin(), made.end(), "@Box.@new0") != made.end());
+	// Pair's _init needs an argument, so a zero-argument .new() cannot be Pair.
+	CHECK(std::find(made.begin(), made.end(), "@Pair.@new0") == made.end());
+	CHECK(count_opcode(find_function(ir, "make"), IROpcode::VCALL) == 1);
+	CHECK_NOTHROW(find_function(ir, "@Box.@new0"));
+}
