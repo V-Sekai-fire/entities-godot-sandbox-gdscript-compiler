@@ -14,6 +14,12 @@
 #include <vector>
 #include <cstdint>
 
+// Default for CompilerOptions::fast_arrays; the build can turn it off
+// (-DGDSCRIPT_FAST_ARRAYS=OFF) to run every test against the per-element path.
+#ifndef GDSCRIPT_FAST_ARRAYS_DEFAULT
+#define GDSCRIPT_FAST_ARRAYS_DEFAULT 1
+#endif
+
 namespace gdscript {
 
 struct IRProgram;
@@ -32,6 +38,11 @@ struct CompilerOptions {
 	bool optimize = true;
 	// Sandbox batching uses scoped handles. Native backends use direct iteration.
 	bool batch_iteration = true;
+	// Packed array regions: a loop copies the typed Packed*Array locals it indexes
+	// into guest memory once (ECALL_PACKED_ACQUIRE) instead of making a host call
+	// per element, and stores the written ones back in place. A host without the
+	// call refuses the acquire, and each loop runs as before. Sandbox only.
+	bool fast_arrays = GDSCRIPT_FAST_ARRAYS_DEFAULT;
 	// Native ScriptInstances represent nested classes as Objects.
 	bool native_classes = false;
 	std::string output_path;

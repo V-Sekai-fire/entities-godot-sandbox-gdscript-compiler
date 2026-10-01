@@ -54,6 +54,9 @@ static void print_usage(const char* program) {
 		"      --trait Name=path  Make a trait from `path` available. Repeatable\n"
 		"      --double-precision Compile for a real_t = double host\n"
 		"      --single-precision Compile for a real_t = float host\n"
+		"      --fast-arrays      Copy the packed arrays a loop indexes into guest memory\n"
+		"                         once (the default)\n"
+		"      --no-fast-arrays   One host call per packed array element\n"
 		"  -h, --help             Show this text\n"
 		"\n"
 		"GDSC_PASSES=<names> selects optimizer passes; GDSC_PASSES=none disables them.\n";
@@ -72,6 +75,7 @@ int main(int argc, char** argv)
 	bool strip_tests = false;
 	bool check_only = false;
 	bool extensions = false;
+	bool fast_arrays = GDSCRIPT_FAST_ARRAYS_DEFAULT;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -134,6 +138,10 @@ int main(int argc, char** argv)
 			check_only = true;
 		} else if (arg == "--extensions") {
 			extensions = true;
+		} else if (arg == "--fast-arrays") {
+			fast_arrays = true;
+		} else if (arg == "--no-fast-arrays") {
+			fast_arrays = false;
 		} else if (arg == "--help" || arg == "-h") {
 			print_usage(argv[0]);
 			return 0;
@@ -166,6 +174,7 @@ int main(int argc, char** argv)
 		CompilerOptions options;
 		options.optimize = !no_optimize;
 		options.extensions = extensions;
+		options.fast_arrays = fast_arrays;
 		options.double_precision = double_precision;
 		options.emit_tests = !strip_tests;
 		options.autoloads = autoloads;
@@ -182,6 +191,7 @@ int main(int argc, char** argv)
 		options.output_elf = true;
 		options.optimize = !no_optimize;
 		options.extensions = extensions;
+		options.fast_arrays = fast_arrays;
 		options.double_precision = double_precision;
 		options.profiling = profiling;
 		// What a shipping build produces: no @test function reaches codegen.

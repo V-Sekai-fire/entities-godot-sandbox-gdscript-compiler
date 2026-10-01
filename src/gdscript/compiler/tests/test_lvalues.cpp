@@ -510,8 +510,19 @@ TEST_CASE("iterating a non array") {
 	const IRFunction &p = find_function(packed, "test");
 	REQUIRE(count_vcalls(packed, p, "size") == 1);
 	REQUIRE(count_vcalls(packed, p, "get") == 1);
-	// No CALL_SYSCALL: Array-only syscalls would throw.
-	REQUIRE(count_opcode(p, IROpcode::CALL_SYSCALL) == 0);
+	// No Array-only syscall: ECALL_ARRAY_SIZE/AT/BATCH would throw on a packed
+	// array. (With fast arrays the walk may also have a region around it, whose
+	// ECALL_PACKED_ACQUIRE/RELEASE are made for packed arrays.)
+	int array_syscalls = 0;
+	for (const auto &instr : p.instructions) {
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
+			(instr.operands[1].immediate() == ECALL_ARRAY_SIZE ||
+			 instr.operands[1].immediate() == ECALL_ARRAY_AT ||
+			 instr.operands[1].immediate() == ECALL_ARRAY_BATCH)) {
+			array_syscalls++;
+		}
+	}
+	REQUIRE(array_syscalls == 0);
 
 	// Array uses syscalls, not VCALL.
 	const IRProgram array = compile_to_ir(
