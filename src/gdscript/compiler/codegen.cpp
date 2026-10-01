@@ -11325,10 +11325,8 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 	}
 
 	// INT->FLOAT, BOOL->INT/FLOAT: payload size mismatch without explicit convert.
-	// FLOAT->INT narrows as GDScript does, truncating toward zero; GDScript warns and goes on.
 	const bool widening = (declared == Variant::FLOAT && actual == Variant::INT) ||
-		(actual == Variant::BOOL && (declared == Variant::INT || declared == Variant::FLOAT)) ||
-		(declared == Variant::INT && actual == Variant::FLOAT);
+		(actual == Variant::BOOL && (declared == Variant::INT || declared == Variant::FLOAT));
 	if (widening) {
 		int converted = alloc_register(func);
 		IRInstruction convert(IROpcode::CONVERT, IRValue::reg(converted), IRValue::reg(reg),
