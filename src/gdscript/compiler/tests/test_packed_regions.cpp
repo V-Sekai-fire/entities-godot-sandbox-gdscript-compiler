@@ -165,7 +165,7 @@ int count_syscalls(const IRFunction &func, int64_t number) {
 
 int count_opcode(const IRFunction &func, IROpcode opcode) {
 	return int(std::count_if(func.instructions.begin(), func.instructions.end(),
-		[&](const IRInstruction &instr) { return instr.opcode == opcode; }));
+							 [&](const IRInstruction &instr) { return instr.opcode == opcode; }));
 }
 
 bool has_region(const std::string &source, const std::string &function) {
@@ -196,15 +196,14 @@ TEST_CASE("with fast arrays a packed-array loop makes no host call per element")
 // Planted before regions existed; now the control. Without fast arrays the
 // element access is still a host call, and this check still fails.
 TEST_CASE("control: without fast arrays a packed-array loop makes a host call per element" *
-	doctest::should_fail()) {
+		  doctest::should_fail()) {
 	const IRProgram ir = compile_to_ir(SOURCE, false);
 	constexpr int elements = 1000;
 	for (const std::string function : { "sum", "fill" }) {
 		CAPTURE(function);
 		const int per_element = host_calls_per_element(ir, function);
 		const int per_loop = per_element * elements;
-		CHECK_MESSAGE(per_loop <= 1, function << " makes " << per_element <<
-			" host call(s) per element, " << per_loop << " for a " << elements << "-element loop");
+		CHECK_MESSAGE(per_loop <= 1, function << " makes " << per_element << " host call(s) per element, " << per_loop << " for a " << elements << "-element loop");
 	}
 }
 
@@ -226,7 +225,8 @@ func copy(src: PackedFloat32Array, dst: PackedFloat32Array, stop: int) -> int:
 		if i == stop:
 			return i
 	return -1
-)", true);
+)",
+									   true);
 	const IRFunction &func = function_named(ir, "copy");
 	CHECK(count_syscalls(func, ECALL_PACKED_ACQUIRE) == 2);
 	CHECK(count_opcode(func, IROpcode::PACKED_GET) == 1);
@@ -247,7 +247,8 @@ func shift(a: PackedInt32Array, b: PackedInt32Array, c: PackedFloat32Array) -> i
 		a[i] = b[i - 1] + int(c[i])
 		t += a[i]
 	return t
-)", true);
+)",
+									   true);
 	const IRFunction &func = function_named(ir, "shift");
 	CHECK(count_syscalls(func, ECALL_PACKED_ACQUIRE) == 3);
 	// a against b; c is another type and cannot share a's storage.
@@ -263,14 +264,16 @@ func f(v: float) -> float:
 func g(a: PackedFloat32Array) -> void:
 	for i in a.size():
 		a[i] = f(a[i])
-)", "g"));
+)",
+						   "g"));
 	// The body resizes the array.
 	CHECK_FALSE(has_region(R"(
 func g(a: PackedInt32Array) -> void:
 	for i in a.size():
 		if a[i] > 0:
 			a.append(a[i] - 1)
-)", "g"));
+)",
+						   "g"));
 	// Another view of the array through a container.
 	CHECK_FALSE(has_region(R"(
 func g(a: PackedInt32Array, holder: Array) -> int:
@@ -280,7 +283,8 @@ func g(a: PackedInt32Array, holder: Array) -> int:
 		var view: PackedInt32Array = holder[0]
 		t += view[i]
 	return t
-)", "g"));
+)",
+						   "g"));
 	// Another array of the same type, written through a method.
 	CHECK_FALSE(has_region(R"(
 func g(a: PackedInt32Array, b: PackedInt32Array) -> int:
@@ -289,7 +293,8 @@ func g(a: PackedInt32Array, b: PackedInt32Array) -> int:
 		t += a[i]
 		b.push_back(t)
 	return t
-)", "g"));
+)",
+						   "g"));
 	// The array escapes as a value.
 	CHECK_FALSE(has_region(R"(
 func g(a: PackedInt32Array, keep: Array) -> int:
@@ -298,7 +303,8 @@ func g(a: PackedInt32Array, keep: Array) -> int:
 		t += a[i]
 		keep.append(a)
 	return t
-)", "g"));
+)",
+						   "g"));
 	// A coroutine.
 	CHECK_FALSE(has_region(R"(
 signal tick
@@ -309,7 +315,8 @@ func g(a: PackedInt32Array) -> int:
 	for i in a.size():
 		t += a[i]
 	return t
-)", "g"));
+)",
+						   "g"));
 }
 
 TEST_CASE("value-type methods and arrays of other types do not stop a region") {
@@ -322,7 +329,8 @@ func g(a: PackedFloat32Array, out: PackedInt32Array) -> float:
 		t += c.r
 		out.append(i)
 	return t
-)", "g"));
+)",
+					 "g"));
 	// Building an error message from plain values, then returning.
 	CHECK(has_region(R"(
 func g(a: PackedInt32Array) -> Dictionary:
@@ -330,7 +338,8 @@ func g(a: PackedInt32Array) -> Dictionary:
 		if a[i] < 0:
 			return {"error": "element %d is %d" % [i, a[i]]}
 	return {"error": ""}
-)", "g"));
+)",
+					 "g"));
 }
 
 TEST_CASE("a region lowers to RISC-V in both precisions") {
