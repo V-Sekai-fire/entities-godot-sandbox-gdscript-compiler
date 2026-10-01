@@ -266,6 +266,7 @@ std::optional<IRProgram> Compiler::compile_to_ir(const std::string& source, cons
 		codegen.set_dropped_tests(dropped_tests);
 		codegen.set_restricted(options.restricted);
 		codegen.set_batch_iteration(options.batch_iteration);
+		codegen.set_fast_arrays(options.fast_arrays);
 		codegen.set_struct_checks(options.restricted ||
 			options.struct_checks != CompilerOptions::StructChecks::OFF,
 			options.struct_checks == CompilerOptions::StructChecks::DEEP);
@@ -459,6 +460,7 @@ namespace gdscript {
 std::optional<std::string> Compiler::compile_to_c(const std::string &source, CompilerOptions options) {
     options.optimize = false;
     options.batch_iteration = false;
+    options.fast_arrays = false;
     auto program = compile_to_ir(source, options);
     if (!program) return std::nullopt;
     try { return CCodeGenerator().generate(*program,
