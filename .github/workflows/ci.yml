@@ -6,6 +6,7 @@ on:
   # Every pull request, not only the ones targeting main: a stacked PR is based
   # on the branch below it and would otherwise get no CI at all.
   pull_request:
+  merge_group:
 
 jobs:
   build-and-test:
