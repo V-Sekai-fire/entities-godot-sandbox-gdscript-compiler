@@ -4844,11 +4844,28 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 
 	if (is_global_variable(expr->name)) {
 		size_t global_idx = m_global_variables.at(expr->name);
-		// Forward reference: global not yet initialized, still NIL.
+		// Forward reference from an earlier global's initializer. GDScript runs member
+		// initializers in declaration order, so the later member still holds its type's
+		// default here: 0, 0.0, false, or null. That value, not an error, is what Godot gives.
 		if (global_idx >= m_globals_lowered) {
-			error_at("Global variable '" + expr->name + "' is used in the initializer of a global "
-				"declared before it", expr,
-				"Move the declaration of '" + expr->name + "' above that global");
+			const IRInstruction::TypeHint declared = global_idx < m_global_types.size()
+				? m_global_types[global_idx] : IRInstruction::TypeHint_NONE;
+			if (declared == Variant::INT) {
+				return gen_int_immediate(0, func);
+			}
+			if (declared == Variant::FLOAT) {
+				return gen_float_immediate(0.0, func);
+			}
+			const int reg = alloc_register(func);
+			if (declared == Variant::BOOL) {
+				IRInstruction instr(IROpcode::LOAD_BOOL, IRValue::reg(reg), IRValue::imm(0));
+				instr.type_hint = Variant::BOOL;
+				func.ir.instructions.push_back(instr);
+				set_register_type(func, reg, Variant::BOOL);
+			} else {
+				func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(reg));
+			}
+			return reg;
 		}
 		if (!m_members_in_scope && global_idx < m_global_is_member.size()
 			&& m_global_is_member[global_idx]) {
