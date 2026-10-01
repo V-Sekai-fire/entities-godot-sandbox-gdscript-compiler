@@ -173,6 +173,7 @@ TEST_CASE("the compiler compiles the rewritten text and says so") {
 	Compiler compiler;
 	CompilerOptions options;
 	options.rewrite = true;
+	options.fast_arrays = true;
 	REQUIRE(compiler.compile_to_ir(source, options).has_value());
 	CHECK(contains(compiler.get_rewritten_source(), "for _sgd_i0 in v.size():"));
 	REQUIRE(compiler.get_rewrite_notes().size() == 1);
