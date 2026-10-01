@@ -49,11 +49,14 @@ public:
 	// and stores it back in place. Also types packed element reads and size(). Off:
 	// one host call per element, as before.
 	void set_fast_arrays(bool enabled) { m_fast_arrays = enabled; }
+	// One line per loop that had candidates: what it copies, or what it drops and why.
+	const std::vector<std::string>& packed_notes() const { return m_packed_notes; }
 
 private:
 	bool m_native_classes = false;
 	bool m_extensions = true;
 	bool m_fast_arrays = true;
+	std::vector<std::string> m_packed_notes;
 	// Per-function state. Value type: lives on the stack for one function's
 	// lowering, so new fields are automatically fresh. Program-wide state
 	// (string constants, globals, label counter) stays on CodeGenerator.

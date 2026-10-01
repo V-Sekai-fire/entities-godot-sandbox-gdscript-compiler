@@ -147,6 +147,8 @@ public:
 	const std::string &get_rewritten_source() const { return m_rewritten_source; }
 	// One line per rewrite applied (or why one was dropped).
 	const std::vector<std::string> &get_rewrite_notes() const { return m_rewrite_notes; }
+	// What each loop over packed arrays became under fast arrays.
+	const std::vector<std::string> &get_packed_notes() const { return m_packed_notes; }
 	// Subset of breakpoint_lines that got a stop emitted.
 	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
 
@@ -157,6 +159,7 @@ private:
 		const std::string& authored, const CompilerOptions& options);
 	std::string m_rewritten_source;
 	std::vector<std::string> m_rewrite_notes;
+	std::vector<std::string> m_packed_notes;
 	void set_error(const std::string& source, const CompilerException& error);
 	void set_error(const std::exception& error);
 	std::string m_error;

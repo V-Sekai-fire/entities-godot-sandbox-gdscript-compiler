@@ -61,6 +61,8 @@ static void print_usage(const char* program) {
 		"      --no-rewrite       Compile the authored loops as written\n"
 		"      --emit-rewritten P Write the GDScript that was compiled to P (a build\n"
 		"                         artifact: the authored file keeps its text)\n"
+		"      --packed-notes     Say which loops copy their packed arrays, and why\n"
+		"                         others do not\n"
 		"  -h, --help             Show this text\n"
 		"\n"
 		"GDSC_PASSES=<names> selects optimizer passes; GDSC_PASSES=none disables them.\n";
@@ -82,6 +84,7 @@ int main(int argc, char** argv)
 	bool fast_arrays = GDSCRIPT_FAST_ARRAYS_DEFAULT;
 	bool rewrite = GDSCRIPT_REWRITE_DEFAULT;
 	std::string emit_rewritten;
+	bool packed_notes = false;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -152,6 +155,8 @@ int main(int argc, char** argv)
 			rewrite = true;
 		} else if (arg == "--no-rewrite") {
 			rewrite = false;
+		} else if (arg == "--packed-notes") {
+			packed_notes = true;
 		} else if (arg == "--emit-rewritten") {
 			if (i + 1 < argc) {
 				emit_rewritten = argv[++i];
@@ -233,6 +238,11 @@ int main(int argc, char** argv)
 			}
 			for (const std::string& note : compiler.get_rewrite_notes()) {
 				std::cerr << "rewrite: " << note << std::endl;
+			}
+		}
+		if (packed_notes) {
+			for (const std::string& note : compiler.get_packed_notes()) {
+				std::cerr << "packed: " << note << std::endl;
 			}
 		}
 
