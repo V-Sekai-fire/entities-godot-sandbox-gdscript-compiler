@@ -413,7 +413,9 @@ TEST_CASE("global initializer forms") {
 	}
 
 	// Referring to a global declared later would read NIL, so it is rejected.
-	REQUIRE(rejects("var a = b\nvar b = 1\nfunc test():\n\treturn a\n"));
+	// A member read before its declaration holds its type's default, null here, as
+	// GDScript runs initializers in order; the typed cases are in test_gdscript_syntax.
+	REQUIRE(!rejects("var a = b\nvar b = 1\nfunc test():\n\treturn a\n"));
 
 	// Non-empty containers, nesting and packed arrays run at startup.
 	{
