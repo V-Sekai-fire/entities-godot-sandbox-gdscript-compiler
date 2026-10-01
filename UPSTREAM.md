@@ -57,7 +57,7 @@ Every file the script would find is listed here, by its path under
 | `parser.h`, `parser.cpp` | Union types, `@test` and `@requires_host_hook` behind the gate; nested classes hoisted to file scope; expression statements; compound assignment into call results; class field getters; operators after a cast (checked in `parse_unary` before upstream's prefix `not`); file-level strings; `:=` recorded on declarations | 194144f, be73eb0, 476b98f, 42d450b, 3f6100c, f4a1f72 |
 | `ast.h` | `VarDeclStmt::inferred` | f4a1f72 |
 | `compiler.h`, `compiler.cpp`, `dump_ir.cpp`, `gdscript_to_riscv.cpp` | `CompilerOptions::fast_arrays` (`--fast-arrays` / `--no-fast-arrays`) and `CompilerOptions::rewrite` (`--rewrite` / `--no-rewrite`), both on; `--emit-rewritten <path>`; `--packed-notes` prints what each loop over packed arrays became (`Compiler::get_packed_notes()`); the rewritten text compiled with the authored line numbers, and the authored text compiled instead if it ever did not compile; `compile_to_c` turns both off | ceb49bc, 878b16b, 63082a0, 98999e4 |
-| `rewrite.h`, `rewrite.cpp` | New: the GDScript rewrite of loops over packed arrays (see below) | 878b16b, 98999e4 |
+| `rewrite.h`, `rewrite.cpp` | New: the GDScript rewrite of loops over packed arrays (see below) | 878b16b, 98999e4, 5b7f6e7 |
 | `ir_opcodes.def` | `PACKED_DATA`, `PACKED_SIZE`, `PACKED_IDENTITY`, `PACKED_INDEX` (a branch), `PACKED_GET`, `PACKED_SET` | ceb49bc |
 | `ir_optimizer.cpp`, `ir_interpreter.cpp`, `c_codegen.cpp` | The packed opcodes in their dispatch (constant folding: only the destination changes; the interpreter and the C backend refuse them, as they refuse host calls); `PACKED_INDEX` is never removed as a branch to the next instruction | ceb49bc |
 | `riscv_codegen.h`, `riscv_codegen.cpp` | A loop scope is released only when the pass left something to release: inline constructors and inline member access allocate nothing, a call's dirty bit ignores an inline answer (a Color, a vector) and tests for a scalar answer first, and residency leaves loop scopes their dirty registers. The packed opcodes and `ECALL_PACKED_ACQUIRE` / `ECALL_PACKED_RELEASE` lowered; the descriptors in the frame | a82a23c, ceb49bc, a8c91b8, 98999e4 |
@@ -102,10 +102,12 @@ An addon without them answers the acquire with `-ENOSYS`, and every region
 runs its fallback loop, so a new compiler is safe on an old addon.
 
 **The rewrite** (`rewrite.h`). Before compiling, `for x in v` over a packed
-array the loop cannot resize becomes an index walk (or, without fast arrays and
-when the loop never writes `v`, a walk over `Array(v)`, fetched sixteen
-elements a host call); an untyped `v` gets that walk under a `typeof` test with
-the authored loop as the fallback; `while ... v.size() ...` reads the size once.
+array the loop cannot resize becomes a walk over `Array(v)` (fetched sixteen
+elements a host call) when the loop never writes `v`, and an index walk
+otherwise; `while ... v.size() ...` reads the size once. An untyped `v` gets
+the index walk under a `typeof` test with the authored loop as the fallback.
+With fast arrays only that untyped walk is rewritten: a region walks a typed
+array and reads its size from the copy, faster than either rewrite would.
 The rewritten text is GDScript and a build artifact (`--emit-rewritten`).
 `--packed-notes` says which loops copy which arrays, and why the others do not.
 
