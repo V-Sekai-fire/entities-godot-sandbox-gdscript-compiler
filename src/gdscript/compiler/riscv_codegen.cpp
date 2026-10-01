@@ -4889,11 +4889,17 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					}
 					return mask;
 				}();
+				// A scalar, the common answer, is tested and skipped in two instructions.
+				const std::string clean = gen_local_label(".scope_clean");
+				emit_i_type(0x13, REG_T0, 3, tag, Variant::STRING); // sltiu
+				mark_label_use(clean, m_code.size());
+				emit_bne(REG_T0, REG_ZERO, 0);
 				emit_li(REG_T1, inline_tags);
 				emit_srl(REG_T1, REG_T1, tag); // tags are below 64
 				emit_andi(REG_T1, REG_T1, 1);
 				emit_xori(REG_T0, REG_T1, 1);
 				for (uint8_t preg : dirty->second) emit_or(preg, preg, REG_T0);
+				define_label(clean);
 			}
 		}
 		{
