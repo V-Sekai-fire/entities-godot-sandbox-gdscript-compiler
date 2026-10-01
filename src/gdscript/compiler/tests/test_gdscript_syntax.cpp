@@ -278,3 +278,61 @@ TEST_CASE("continue after a nested typed-array loop reaches the outer loop") {
 	CAPTURE(compiler.get_error());
 	CHECK_FALSE(elf.empty());
 }
+
+// Three shapes the rx census (contract-zone-backend#92) found in scripts Godot accepts.
+
+TEST_CASE("a keyword after a dot is a member name") {
+	const Program program = parse(
+			"func ok(s: String) -> bool:\n"
+			"\treturn s.match(\"a*\")\n");
+	const MemberCallExpr *call = dynamic_cast<const MemberCallExpr *>(returned(program));
+	REQUIRE(call != nullptr);
+	CHECK(call->member_name == "match");
+	CHECK(call->is_method_call);
+	CHECK_NOTHROW(compile_to_ir(
+			"extends Node\n"
+			"func ok(s: String) -> bool:\n"
+			"\treturn s.match(\"a*\")\n"));
+}
+
+TEST_CASE("control: a keyword still cannot start an expression") {
+	CHECK_THROWS(parse(
+			"extends Node\n"
+			"func bad():\n"
+			"\tvar x = match\n"));
+}
+
+TEST_CASE("pass is a class-body statement") {
+	const Program program = parse(
+			"extends Node\n"
+			"\n"
+			"pass\n"
+			"\n"
+			"func f() -> int:\n"
+			"\treturn 1\n");
+	CHECK(program.functions.size() == 1);
+}
+
+TEST_CASE("a lambda in a member initializer is lifted") {
+	const IRProgram ir = compile_to_ir(
+			"extends Node\n"
+			"var x = (func(): return 1).call()\n");
+	bool lifted = false;
+	for (const IRFunction &func : ir.functions) {
+		lifted = lifted || func.name == "@lambda_0";
+	}
+	CHECK(lifted);
+}
+
+TEST_CASE("a lambda in a function body is lifted under its own label, after the initializer's") {
+	const IRProgram ir = compile_to_ir(
+			"extends Node\n"
+			"var x = (func(): return 1).call()\n"
+			"func f() -> int:\n"
+			"\treturn (func(): return 2).call()\n");
+	int lifted = 0;
+	for (const IRFunction &func : ir.functions) {
+		lifted += func.name.rfind("@lambda_", 0) == 0 ? 1 : 0;
+	}
+	CHECK(lifted == 2);
+}
