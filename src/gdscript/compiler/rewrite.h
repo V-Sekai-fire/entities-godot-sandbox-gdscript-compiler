@@ -20,14 +20,17 @@ namespace gdscript {
 //              for _sgd_i0 in v.size():
 //                  var x: T = v[_sgd_i0]
 //            One host call an element (the element) instead of two (size and
-//            element). Without fast arrays, a walk that also never writes v
-//            becomes `for _sgd_e0 in Array(v)`: Array walks are fetched sixteen
-//            elements a host call. An untyped `v` gets the walk under
+//            element). A walk that also never writes v becomes
+//            `for _sgd_e0 in Array(v)`: Array walks are fetched sixteen elements
+//            a host call. An untyped `v` gets the index walk under
 //            `if typeof(v) >= TYPE_PACKED_BYTE_ARRAY and typeof(v) <= TYPE_PACKED_VECTOR4_ARRAY:`
 //            with the authored loop in its `else:`.
 //   size     `while ... v.size() ...` over a typed packed array the body cannot
 //            resize: `var _sgd_n0 := v.size()` before the loop, and the test
 //            reads it. One host call a pass fewer.
+//
+// With fast arrays only the untyped walk is rewritten: a region walks a typed
+// array and reads its size from the copy, which beats both other rules.
 //
 // "Cannot resize": in the loop, `v` appears only as `v[i]`, `v[i] = x`,
 // `v.size()` and `v.is_empty()`, and nothing in it can run code that could
@@ -35,8 +38,7 @@ namespace gdscript {
 // but on locals of value types or on packed arrays of another element type, no
 // member variable (a property may have a setter or getter), no await, no lambda.
 struct RewriteOptions {
-	// The code generator's packed array regions run: a read-only walk over a typed
-	// array is already a copy in guest memory, so it is not turned into an Array.
+	// The code generator's packed array regions run, so typed arrays are left to them.
 	bool fast_arrays = true;
 };
 

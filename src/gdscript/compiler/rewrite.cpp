@@ -697,6 +697,9 @@ private:
 		if (!typed && type != "Variant") {
 			return; // an Array (already fetched in batches), a String, a number, or not known
 		}
+		if (typed && m_options.fast_arrays) {
+			return; // the region walks the copy
+		}
 		static const std::regex header(
 			R"(^([ \t]*)for[ \t]+([A-Za-z_][A-Za-z_0-9]*)([ \t]*:[ \t]*[A-Za-z_][A-Za-z_0-9]*)?[ \t]+in[ \t]+([A-Za-z_][A-Za-z_0-9]*)[ \t]*:[ \t]*(#.*)?$)");
 		std::smatch parts;
@@ -723,7 +726,7 @@ private:
 		edit.last = loop->line;
 		if (typed) {
 			const std::string element = packed_elements().at(type);
-			if (!m_options.fast_arrays && !check.writes) {
+			if (!check.writes) {
 				// Fetched sixteen elements a host call; nothing writes the array, so
 				// the snapshot cannot go stale.
 				const std::string each = fresh("e");
@@ -772,8 +775,8 @@ private:
 
 	// `while ... v.size() ...` over a typed packed array.
 	void hoist_size(const WhileStmt* loop, const Locals& locals) {
-		if (loop->line <= 0 || loop->line > int(m_lines.size())) {
-			return;
+		if (m_options.fast_arrays || loop->line <= 0 || loop->line > int(m_lines.size())) {
+			return; // with fast arrays the region reads the size from the copy
 		}
 		std::vector<std::string> arrays;
 		std::function<void(const Expr*)> find = [&](const Expr* expr) {
