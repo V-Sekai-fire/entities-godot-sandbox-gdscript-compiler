@@ -29,16 +29,16 @@ bool contains(const std::string &text, const std::string &part) {
 
 } // namespace
 
-TEST_CASE("a typed walk becomes an index walk") {
-	const RewriteResult result = rewrite(
+TEST_CASE("with fast arrays a typed walk is left to the region") {
+	const std::string source =
 			"func f(v: PackedFloat32Array) -> float:\n"
 			"\tvar t := 0.0\n"
 			"\tfor x in v:\n"
 			"\t\tt += x\n"
-			"\treturn t\n");
-	REQUIRE(result.applied == 1);
-	CHECK(contains(result.source, "\tfor _sgd_i0 in v.size():\n\t\tvar x: float = v[_sgd_i0]\n\t\tt += x\n"));
-	CHECK_FALSE(contains(result.source, "for x in v"));
+			"\treturn t\n";
+	const RewriteResult result = rewrite(source);
+	CHECK(result.applied == 0);
+	CHECK(result.source == source);
 }
 
 TEST_CASE("without fast arrays a read-only walk reads an Array copy") {
@@ -61,7 +61,8 @@ TEST_CASE("without fast arrays a read-only walk reads an Array copy") {
 			"\treturn i\n",
 			false);
 	REQUIRE(written.applied == 1);
-	CHECK(contains(written.source, "for _sgd_i0 in v.size():"));
+	CHECK(contains(written.source, "\tfor _sgd_i0 in v.size():\n\t\tvar x: int = v[_sgd_i0]\n\t\tv[i] = x * 2\n"));
+	CHECK_FALSE(contains(written.source, "for x in v"));
 }
 
 TEST_CASE("an untyped walk is guarded, with the authored loop as the fallback") {
@@ -82,15 +83,18 @@ TEST_CASE("an untyped walk is guarded, with the authored loop as the fallback") 
 				   "\t\t\tt += float(x)\n"));
 }
 
-TEST_CASE("a while over size() reads it once") {
-	const RewriteResult result = rewrite(
+TEST_CASE("without fast arrays a while over size() reads it once") {
+	const std::string source =
 			"func f(v: PackedInt64Array) -> int:\n"
 			"\tvar i := 0\n"
 			"\twhile i < v.size() and v[i] < 10:\n"
 			"\t\ti += 1\n"
-			"\treturn i\n");
+			"\treturn i\n";
+	const RewriteResult result = rewrite(source, false);
 	REQUIRE(result.applied == 1);
 	CHECK(contains(result.source, "\tvar _sgd_n0 := v.size()\n\twhile i < _sgd_n0 and v[i] < 10:\n"));
+	// With them the region reads the size from its copy.
+	CHECK(rewrite(source).applied == 0);
 }
 
 TEST_CASE("loops that could change the array's size keep their text") {
@@ -130,12 +134,23 @@ TEST_CASE("loops that could change the array's size keep their text") {
 		"\tfor i in n:\n"
 		"\t\tt += i\n"
 		"\treturn t\n",
+		// An untyped walk whose body calls into the guest.
+		"func g(x) -> float:\n"
+		"\treturn x\n"
+		"func f(values) -> float:\n"
+		"\tvar t := 0.0\n"
+		"\tfor x in values:\n"
+		"\t\tt += g(x)\n"
+		"\treturn t\n",
 	};
 	for (const char *source : unchanged) {
-		CAPTURE(source);
-		const RewriteResult result = rewrite(source);
-		CHECK(result.applied == 0);
-		CHECK(result.source == source);
+		for (const bool fast_arrays : { false, true }) {
+			CAPTURE(source);
+			CAPTURE(fast_arrays);
+			const RewriteResult result = rewrite(source, fast_arrays);
+			CHECK(result.applied == 0);
+			CHECK(result.source == source);
+		}
 	}
 }
 
@@ -149,7 +164,7 @@ TEST_CASE("the rewritten text keeps the authored line numbers") {
 			"\n" // 6
 			"func g() -> int:\n" // 7
 			"\treturn 1 + undefined_name\n"; // 8
-	const RewriteResult result = rewrite(source);
+	const RewriteResult result = rewrite(source, false);
 	REQUIRE(result.applied == 1);
 	REQUIRE(result.line_map.size() == 10); // [0] and nine rewritten lines
 	CHECK(result.line_map[3] == 3);
@@ -161,6 +176,7 @@ TEST_CASE("the rewritten text keeps the authored line numbers") {
 	Compiler compiler;
 	CompilerOptions options;
 	options.rewrite = true;
+	options.fast_arrays = false;
 	CHECK_FALSE(compiler.compile_to_ir(source, options).has_value());
 	CHECK(compiler.get_error_info().line == 8);
 }
@@ -175,9 +191,9 @@ TEST_CASE("the compiler compiles the rewritten text and says so") {
 	Compiler compiler;
 	CompilerOptions options;
 	options.rewrite = true;
-	options.fast_arrays = true;
+	options.fast_arrays = false;
 	REQUIRE(compiler.compile_to_ir(source, options).has_value());
-	CHECK(contains(compiler.get_rewritten_source(), "for _sgd_i0 in v.size():"));
+	CHECK(contains(compiler.get_rewritten_source(), "for _sgd_e0 in Array(v):"));
 	REQUIRE(compiler.get_rewrite_notes().size() == 1);
 	CHECK(contains(compiler.get_rewrite_notes()[0], "line 3: walk"));
 
