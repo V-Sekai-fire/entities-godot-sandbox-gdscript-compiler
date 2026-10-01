@@ -86,3 +86,46 @@ TEST_CASE("a base script is merged, and a restricted build refuses one") {
 	CHECK_MESSAGE(!compiler.compile_to_ir("extends Base\n", options),
 				  "the frontend skipped the restricted policy");
 }
+
+TEST_CASE("a native class build keeps packed members, nested signals and preloads") {
+	Compiler compiler;
+	for (bool optimize : { false, true }) {
+		CompilerOptions editor;
+		editor.native_classes = true;
+		editor.optimize = optimize;
+		auto compiled = compiler.compile_to_ir(
+				"extends RefCounted\n"
+				"var names: PackedStringArray = []\n"
+				"var optional: PackedStringArray? = []\n"
+				"class Row extends RefCounted:\n"
+				"\tconst Data = preload(\"res://data.ugd\")\n"
+				"\tsignal clicked(index: int)\n"
+				"\tfunc trigger(index: int):\n\t\tclicked.emit(index)\n"
+				"func axis():\n\treturn Vector3.AXIS_Z + Vector4i.AXIS_W\n",
+				editor);
+		REQUIRE_MESSAGE(compiled.has_value(), compiler.get_error());
+		ir_verify(*compiled);
+		auto axis_ir = compiler.compile_to_ir("func axis():\n\treturn Vector3.AXIS_Z + Vector4i.AXIS_W\n", editor);
+		REQUIRE_MESSAGE(axis_ir.has_value(), compiler.get_error());
+		IRInterpreter axes(*axis_ir);
+		CHECK_MESSAGE(std::get<int64_t>(axes.call("axis")) == 5, "builtin integer constants changed values");
+		CHECK_MESSAGE((compiled->has_member_init && compiled->has_global_init),
+					  "packed members and nested preloads need their respective initializers");
+		CHECK_MESSAGE((compiled->class_signatures.size() == 1 &&
+					   compiled->class_signatures[0].signals.size() == 1),
+					  "nested class signal metadata missing");
+		auto encoded = encode_class_signatures(compiled->class_signatures);
+		std::vector<ClassSignature> decoded;
+		CHECK_MESSAGE(decode_class_signatures(encoded.data(), encoded.size(), decoded), "class metadata round trip");
+		CHECK_MESSAGE((decoded.size() == 1 && decoded[0].signals.size() == 1 &&
+					   decoded[0].signals[0].name == "clicked" &&
+					   decoded[0].signals[0].parameters[0].type == Variant::INT),
+					  "class metadata lost its signal signature");
+		CHECK_MESSAGE((!decode_class_signatures(encoded.data(), encoded.size() - 1, decoded) && decoded.empty()),
+					  "truncated class signal metadata accepted");
+		CHECK_MESSAGE(!compiler.compile_to_ir("class Row:\n\tsignal hit\n\tvar hit = 1\n", editor),
+					  "nested signal and field collision accepted");
+		CHECK_MESSAGE(!compiler.compile_to_ir("class Row:\n\tsignal hit\n\tsignal hit\n", editor),
+					  "duplicate nested signal accepted");
+	}
+}

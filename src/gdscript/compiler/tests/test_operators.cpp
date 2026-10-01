@@ -253,6 +253,30 @@ TEST_CASE("is on a class name asks the engine") {
 	REQUIRE(!run_bool("func f() -> bool:\n\tvar i := 5\n\treturn i is Node2D\n", "f"));
 }
 
+// `x is Tool` where `const Tool = preload(...)`. The name is a constant and not
+// a global class. The script it holds has no global name to compare, so the old
+// walk answered false even for an instance of that very script.
+TEST_CASE("is on a preloaded script compares identity") {
+	const IRProgram ir = compile_to_ir(
+			"const Tool = preload(\"res://tool.sgd\")\n"
+			"func f(a) -> bool:\n\treturn a is Tool\n",
+			false);
+	const IRFunction &f = find_function(ir, "f");
+	std::vector<std::string> called;
+	bool compares_identity = false;
+	for (const auto &instr : f.instructions) {
+		if (instr.opcode == IROpcode::VCALL) {
+			called.push_back(ir.strings[instr.operands[2].string_id]);
+		}
+		if (instr.opcode == IROpcode::GLOBAL_CALL) {
+			compares_identity = true;
+		}
+	}
+	REQUIRE((called == std::vector<std::string>{ "get_script", "get_base_script" }));
+	REQUIRE(compares_identity);
+	REQUIRE(count_opcode(f, IROpcode::LOAD_STRING_AS) == 0);
+}
+
 // `x as int` is the conversion the constructor performs, and shares its
 // lowering. A class name is rejected: there the cast yields null for an object
 // of the wrong class, which a conversion does not.
@@ -351,6 +375,13 @@ TEST_CASE("not binds looser than comparison") {
 	REQUIRE(!run_bool("func f() -> bool:\n\treturn not not false\n", "f"));
 	// `and` is looser still, so this is `(not a) and b`, not `not (a and b)`.
 	REQUIRE(run_bool("func f(a: bool, b: bool) -> bool:\n\treturn not a and b\n", "f", { false, true }));
+
+	REQUIRE(run_int("func f(a: bool, b: bool) -> bool:\n\treturn a == not b\n", "f", { true, false }));
+	REQUIRE(run_int("func f(a: bool, b: bool) -> bool:\n\treturn a != not b\n", "f", { false, false }));
+	REQUIRE(run_int("func f(a: bool, b: int, c: int) -> bool:\n\treturn a == not b < c\n",
+					"f", { false, int64_t(1), int64_t(2) }));
+	REQUIRE(run_int("func f(a: bool, b: bool) -> bool:\n\treturn a == not not b\n", "f", { true, true }));
+	REQUIRE(!run_int("func f(a: bool, b: bool) -> bool:\n\treturn a == not b and false\n", "f", { true, false }));
 }
 
 // -= Iterating a container =-

@@ -72,10 +72,11 @@ TEST_CASE("every loop form takes a scope") {
 	const Case cases[] = {
 		{ "for over range", "func test():\n\tfor i in range(4):\n\t\tvar d = {\"a\": i}\n\treturn 1\n", 1, 2 },
 		// An Array walk takes one scope for the batch and one for each body pass.
-		{ "for over an array", "func test():\n\tfor v in [1, 2, 3]:\n\t\tvar d = {\"a\": v}\n\treturn 1\n", 2, 4 },
+		// The exit releases only the batch scope because the body mark lies above it.
+		{ "for over an array", "func test():\n\tfor v in [1, 2, 3]:\n\t\tvar d = {\"a\": v}\n\treturn 1\n", 2, 3 },
 		// A string walk takes two: one holding the batch of characters, one
 		// holding what the body makes from each of them.
-		{ "for over a string", "func test():\n\tfor c in \"abc\":\n\t\tvar s = c + \"!\"\n\treturn 1\n", 2, 4 },
+		{ "for over a string", "func test():\n\tfor c in \"abc\":\n\t\tvar s = c + \"!\"\n\treturn 1\n", 2, 3 },
 		{ "while", "func test():\n\tvar i = 0\n\twhile i < 4:\n\t\tvar d = {\"a\": i}\n\t\ti += 1\n\treturn 1\n", 1, 2 },
 	};
 	for (const Case &c : cases) {
@@ -263,6 +264,37 @@ static bool contains_sw_zero_sp(const std::vector<uint8_t> &elf) {
 			return true;
 	}
 	return false;
+}
+
+// A SCOPE_RELEASE whose SCOPE_MARK has not run releases to whatever the
+// scope's stack slot held, which can be every owner of the frame. An empty
+// first batch leaves a walk before its body mark is taken, and a match jump
+// table enters an arm at its body and skips the arm's test.
+TEST_CASE("no release without its mark") {
+	const std::string source =
+			"func walk(items: Array, text: String):\n"
+			"\tvar out = \"\"\n"
+			"\tfor item in items:\n"
+			"\t\tout += str(item)\n"
+			"\tfor letter in text:\n"
+			"\t\tout += letter + \"!\"\n"
+			"\treturn out\n"
+			"func arm(code: int):\n"
+			"\tvar out = \"none\"\n"
+			"\tmatch code:\n"
+			"\t\t1: out = \"one\" + str(code)\n"
+			"\t\t2: out = \"two\" + str(code)\n"
+			"\t\t3: out = \"three\" + str(code)\n"
+			"\t\t4: out = \"four\" + str(code)\n"
+			"\t\t5: out = \"five\" + str(code)\n"
+			"\treturn out\n";
+	for (bool optimize : { false, true }) {
+		const IRProgram ir = compile_to_ir(source, optimize);
+		for (const auto &func : ir.functions) {
+			ir_verify(func, optimize ? "the optimizer" : "codegen");
+		}
+	}
+	check(true, "every release follows its mark on every path");
 }
 
 TEST_CASE("the backend emits the syscall and zeroes the frame") {
