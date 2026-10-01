@@ -39,6 +39,9 @@ jobs:
           cd build
           ctest --output-on-failure --parallel 6
 
+      - name: Census self-test (a planted syntax error must be counted as a failure)
+        run: python3 scripts/census.py --self-test --compiler build/src/gdscript/compiler/gdscript_to_riscv
+
   build-release:
     runs-on: ubuntu-latest
     name: Build Release

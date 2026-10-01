@@ -821,9 +821,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_members_in_scope = true;
 	ir_program.global_init = std::move(init_func.ir);
 	ir_program.member_init = std::move(member_func.ir);
-
-	m_pending_lambdas.clear();
-	m_next_lambda = 0;
+	// A lambda in a member initializer is queued like any other and lifted below. Clearing the
+	// queue here left `__init_members` calling a label nothing emitted.
 
 	struct NativeDefault {
 		FunctionDecl function;
@@ -6315,6 +6314,21 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 	if (is_local_function(expr->name) || m_test_functions.count(expr->name)) {
 		reject_test_reference(expr->name, expr);
 		return gen_make_callable(expr->name, -1, func);
+	}
+
+	// A method of the enclosing class by bare name is a Callable bound to this instance, the
+	// way a lambda binds its captures; a static one binds nothing.
+	if (m_current_class != nullptr) {
+		const StructDecl* owner = nullptr;
+		if (const FunctionDecl* method = find_class_method(*m_current_class, expr->name, &owner)) {
+			Variable* self = find_variable(func, "self");
+			if (method->is_static) {
+				return gen_make_callable(lifted_method_name(*owner, expr->name), -1, func);
+			}
+			if (self != nullptr) {
+				return gen_make_callable(lifted_method_name(*owner, expr->name), self->register_num, func);
+			}
+		}
 	}
 
 	// A global class name is its Script resource.  Static methods and constants
