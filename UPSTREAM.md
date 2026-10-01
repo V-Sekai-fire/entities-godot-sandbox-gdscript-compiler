@@ -127,4 +127,6 @@ is checked in Godot against interpreted GDScript, in all four combinations of
 the two options and with both rewritten texts run as GDScript:
 `src/gdscript/compiler/tests/godot_packed/` holds those cases (aliasing, a
 caller observing writes, the identity guard's fallback, out-of-range indices,
-NaN payloads, every element type) and their runner.
+NaN payloads, every element type) and their runner, and a benchmark of
+the four combinations against GDScript (`bench.gd`, `run_bench.gd`, with
+`check_rewritten.gd` for its rewritten texts).
