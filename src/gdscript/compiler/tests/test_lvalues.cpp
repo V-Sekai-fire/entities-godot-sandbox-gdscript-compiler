@@ -514,7 +514,7 @@ TEST_CASE("iterating a non array") {
 	// array. (With fast arrays the walk may also have a region around it, whose
 	// ECALL_PACKED_ACQUIRE/RELEASE are made for packed arrays.)
 	int array_syscalls = 0;
-	for (const auto &instr : p.instructions) {
+	for (const IRInstruction &instr : p.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
 			(instr.operands[1].immediate() == ECALL_ARRAY_SIZE ||
 			 instr.operands[1].immediate() == ECALL_ARRAY_AT ||

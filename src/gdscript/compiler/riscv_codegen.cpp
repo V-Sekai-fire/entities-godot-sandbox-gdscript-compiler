@@ -1863,7 +1863,7 @@ void RISCVCodeGen::gen_syscall_array_batch(const IRInstruction& instr, int resul
 // the frame: +0 data pointer, +8 element count, +16 identity, +24 dirty flag.
 
 int RISCVCodeGen::packed_descriptor_offset(int64_t token) const {
-	const auto it = m_fn.packed_offsets.find(token);
+	const std::unordered_map<int64_t, int>::const_iterator it = m_fn.packed_offsets.find(token);
 	if (it == m_fn.packed_offsets.end()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"A packed array access refers to an unknown descriptor");
@@ -2025,7 +2025,9 @@ void RISCVCodeGen::gen_packed_get(const IRInstruction& instr) {
 			if (bytes == 0 || packed_element_variant_type(type) == Variant::NIL) {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported packed array element type");
 			}
-			auto [base, offset] = value_destination(dst_vreg);
+			const std::pair<uint8_t, int> destination = value_destination(dst_vreg);
+			const uint8_t base = destination.first;
+			const int offset = destination.second;
 			for (int at = 0; at + 8 <= bytes; at += 8) {
 				emit_ld(REG_T0, address, at);
 				emit_sd(REG_T0, base, offset + VARIANT_DATA_OFFSET + at);
@@ -2167,7 +2169,9 @@ void RISCVCodeGen::gen_packed_index(const IRInstruction& instr) {
 
 void RISCVCodeGen::emit_typed_float_result(int result_vreg, int result_offset, uint8_t source) {
 	if (m_fn.forward_return) {
-		auto [base, offset] = value_destination(result_vreg);
+		const std::pair<uint8_t, int> destination = value_destination(result_vreg);
+		const uint8_t base = destination.first;
+		const int offset = destination.second;
 		emit_li(REG_T0, Variant::FLOAT);
 		emit_store_variant_type(REG_T0, base, offset);
 		emit_fsd(source, base, offset + VARIANT_DATA_OFFSET);
