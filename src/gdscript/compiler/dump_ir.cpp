@@ -81,6 +81,8 @@ static void print_usage(const char* program) {
 		"      --single-precision Compile for a real_t = float host\n"
 		"      --fast-arrays      Packed array regions (the default)\n"
 		"      --no-fast-arrays   One host call per packed array element\n"
+		"      --no-rewrite       Do not rewrite loops over packed arrays (--check only;\n"
+		"                         the IR dump shows the authored text)\n"
 		"  -h, --help             Show this text\n"
 		"\n"
 		"GDSC_PASSES=<names> selects optimizer passes; GDSC_PASSES=none disables them.\n";
@@ -95,6 +97,7 @@ int main(int argc, char** argv)
 	bool check_only = false;
 	bool extensions = false;
 	bool fast_arrays = GDSCRIPT_FAST_ARRAYS_DEFAULT;
+	bool rewrite = GDSCRIPT_REWRITE_DEFAULT;
 	bool double_precision = native_variant_layout().double_precision;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -115,6 +118,10 @@ int main(int argc, char** argv)
 			fast_arrays = true;
 		} else if (arg == "--no-fast-arrays") {
 			fast_arrays = false;
+		} else if (arg == "--no-rewrite") {
+			rewrite = false;
+		} else if (arg == "--rewrite") {
+			rewrite = true;
 		} else if (arg == "--extensions") {
 			extensions = true;
 		} else if (arg == "--help" || arg == "-h") {
@@ -181,6 +188,7 @@ int main(int argc, char** argv)
 		options.optimize = !no_optimize;
 		options.extensions = extensions;
 		options.fast_arrays = fast_arrays;
+		options.rewrite = rewrite;
 		options.double_precision = double_precision;
 		options.autoloads = autoloads;
 		options.global_script_classes = global_classes;
