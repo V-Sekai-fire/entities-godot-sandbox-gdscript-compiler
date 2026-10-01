@@ -1992,35 +1992,29 @@ void RISCVCodeGen::gen_packed_get(const IRInstruction& instr) {
 			emit_fld(REG_FA2, address, 0);
 			emit_typed_float_result(dst_vreg, dst_offset, REG_FA2);
 			return;
-		case Variant::PACKED_FLOAT32_ARRAY: {
-			// Widened as the host widens it: a NaN keeps its sign and payload and
-			// comes back quiet, where fcvt.d.s would answer the canonical NaN.
-			const std::string nan = gen_local_label(".packed_load_nan");
-			const std::string done = gen_local_label(".packed_load_done");
-			emit_flw(REG_FA2, address, 0);
-			emit_r_type(0x53, REG_T0, 0b010, REG_FA2, REG_FA2, 0b1010000); // feq.s
-			mark_label_use(nan, m_code.size());
-			emit_beq(REG_T0, REG_ZERO, 0);
-			emit_fcvt_d_s(REG_FA2, REG_FA2);
-			mark_label_use(done, m_code.size());
-			emit_jal(REG_ZERO, 0);
-			define_label(nan);
-			emit_lwu(REG_T0, address, 0);
-			emit_slli(REG_T2, REG_T0, 42); // (bits & 0x3fffff) << 29
-			emit_srli(REG_T2, REG_T2, 13);
-			emit_srli(REG_T0, REG_T0, 31); // the sign, to bit 63
-			emit_slli(REG_T0, REG_T0, 63);
-			emit_or(REG_T2, REG_T2, REG_T0);
-			emit_li(REG_T0, int64_t(0x7ff8000000000000ull));
-			emit_or(REG_T2, REG_T2, REG_T0);
-			emit_fmv_d_x(REG_FA2, REG_T2);
-			define_label(done);
+		case Variant::PACKED_FLOAT32_ARRAY:
+			emit_packed_float_widen(REG_FA2, address, 0);
 			emit_typed_float_result(dst_vreg, dst_offset, REG_FA2);
 			return;
-		}
+		case Variant::PACKED_COLOR_ARRAY:
+			if (real_size() == 8) {
+				// The element is four floats, the Variant four doubles (real_t).
+				const std::pair<uint8_t, int> destination = value_destination(dst_vreg);
+				for (int i = 0; i < 4; i++) {
+					emit_packed_float_widen(REG_FA2, address, i * 4);
+					emit_fsd(REG_FA2, destination.first, destination.second + VARIANT_DATA_OFFSET + i * 8);
+				}
+				emit_li(REG_T0, Variant::COLOR);
+				emit_store_variant_type(REG_T0, destination.first, destination.second);
+				if (!m_fn.forward_return) {
+					note_known_tag(dst_vreg, Variant::COLOR);
+				}
+				return;
+			}
+			[[fallthrough]];
 		default: {
-			// A vector or a Color: the element is laid out exactly as the Variant
-			// payload holds it (real_t components; Color is always float).
+			// A vector, or a Color when real_t is float: the element is laid out
+			// exactly as the Variant payload holds it.
 			const int bytes = packed_element_bytes(type);
 			if (bytes == 0 || packed_element_variant_type(type) == Variant::NIL) {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported packed array element type");
@@ -2089,31 +2083,19 @@ void RISCVCodeGen::gen_packed_set(const IRInstruction& instr) {
 				emit_fsw(REG_FA1, address, 0);
 				break;
 			}
-			// Narrowed as the host narrows it: round to nearest even, and a NaN
-			// keeps its sign and the top of its payload, quiet.
-			const std::string nan = gen_local_label(".packed_store_nan");
-			const std::string done = gen_local_label(".packed_store_done");
 			const uint8_t value = emit_float_operand(REG_FA2, value_vreg, value_offset);
-			emit_feq_d(REG_T0, value, value);
-			mark_label_use(nan, m_code.size());
-			emit_beq(REG_T0, REG_ZERO, 0);
-			emit_fcvt_s_d(REG_FA1, value);
-			emit_fsw(REG_FA1, address, 0);
-			mark_label_use(done, m_code.size());
-			emit_jal(REG_ZERO, 0);
-			define_label(nan);
-			emit_r_type(0x53, REG_T0, 0, value, 0, 0b1110001); // fmv.x.d
-			emit_slli(REG_T2, REG_T0, 13); // mantissa bits 50..29 -> 21..0
-			emit_srli(REG_T2, REG_T2, 42);
-			emit_srli(REG_T0, REG_T0, 63); // the sign, to bit 31
-			emit_slli(REG_T0, REG_T0, 31);
-			emit_or(REG_T2, REG_T2, REG_T0);
-			emit_li(REG_T0, 0x7fc00000);
-			emit_or(REG_T2, REG_T2, REG_T0);
-			emit_sw(REG_T2, address, 0);
-			define_label(done);
+			emit_packed_float_narrow(value, address, 0);
 			break;
 		}
+		case Variant::PACKED_COLOR_ARRAY:
+			if (real_size() == 8) {
+				for (int i = 0; i < 4; i++) {
+					emit_fld(REG_FA2, REG_SP, value_offset + VARIANT_DATA_OFFSET + i * 8);
+					emit_packed_float_narrow(REG_FA2, address, i * 4);
+				}
+				break;
+			}
+			[[fallthrough]];
 		default: {
 			const int bytes = packed_element_bytes(type);
 			if (bytes == 0 || packed_element_variant_type(type) == Variant::NIL) {
@@ -2133,6 +2115,56 @@ void RISCVCodeGen::gen_packed_set(const IRInstruction& instr) {
 	}
 	// No dirty word to set: the acquire and release of an array the region writes
 	// carry PACKED_WRITTEN.
+}
+
+// Widened as the host widens it: a NaN keeps its sign and payload and comes back
+// quiet, where fcvt.d.s would answer the canonical NaN.
+void RISCVCodeGen::emit_packed_float_widen(uint8_t dst, uint8_t address, int offset) {
+	const std::string nan = gen_local_label(".packed_load_nan");
+	const std::string done = gen_local_label(".packed_load_done");
+	emit_flw(dst, address, offset);
+	emit_r_type(0x53, REG_T0, 0b010, dst, dst, 0b1010000); // feq.s
+	mark_label_use(nan, m_code.size());
+	emit_beq(REG_T0, REG_ZERO, 0);
+	emit_fcvt_d_s(dst, dst);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+	define_label(nan);
+	emit_lwu(REG_T0, address, offset);
+	emit_slli(REG_T2, REG_T0, 42); // (bits & 0x3fffff) << 29
+	emit_srli(REG_T2, REG_T2, 13);
+	emit_srli(REG_T0, REG_T0, 31); // the sign, to bit 63
+	emit_slli(REG_T0, REG_T0, 63);
+	emit_or(REG_T2, REG_T2, REG_T0);
+	emit_li(REG_T0, int64_t(0x7ff8000000000000ull));
+	emit_or(REG_T2, REG_T2, REG_T0);
+	emit_fmv_d_x(dst, REG_T2);
+	define_label(done);
+}
+
+// Narrowed as the host narrows it: round to nearest even, and a NaN keeps its sign
+// and the top of its payload, quiet.
+void RISCVCodeGen::emit_packed_float_narrow(uint8_t value, uint8_t address, int offset) {
+	const std::string nan = gen_local_label(".packed_store_nan");
+	const std::string done = gen_local_label(".packed_store_done");
+	emit_feq_d(REG_T0, value, value);
+	mark_label_use(nan, m_code.size());
+	emit_beq(REG_T0, REG_ZERO, 0);
+	emit_fcvt_s_d(REG_FA1, value);
+	emit_fsw(REG_FA1, address, offset);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+	define_label(nan);
+	emit_r_type(0x53, REG_T0, 0, value, 0, 0b1110001); // fmv.x.d
+	emit_slli(REG_T2, REG_T0, 13); // mantissa bits 50..29 -> 21..0
+	emit_srli(REG_T2, REG_T2, 42);
+	emit_srli(REG_T0, REG_T0, 63); // the sign, to bit 31
+	emit_slli(REG_T0, REG_T0, 31);
+	emit_or(REG_T2, REG_T2, REG_T0);
+	emit_li(REG_T0, 0x7fc00000);
+	emit_or(REG_T2, REG_T2, REG_T0);
+	emit_sw(REG_T2, address, offset);
+	define_label(done);
 }
 
 // PACKED_DATA (word 0), PACKED_SIZE (word 1), PACKED_IDENTITY (word 2): one
