@@ -1610,7 +1610,7 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 	}
 
 	if (auto* index_expr = dynamic_cast<const IndexExpr*>(target)) {
-		if (auto* candidate = packed_candidate(index_expr->object.get(), func)) {
+		if (FunctionContext::PackedCandidate* candidate = packed_candidate(index_expr->object.get(), func)) {
 			gen_packed_store(*candidate, index_expr, value_reg, func);
 			free_register(func, value_reg);
 			return;
@@ -3316,7 +3316,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		return;
 	}
 	invalidate_loop_character_registers(stmt->body, func);
-	if (auto* candidate = packed_candidate(stmt->iterable.get(), func)) {
+	if (FunctionContext::PackedCandidate* candidate = packed_candidate(stmt->iterable.get(), func)) {
 		gen_packed_walk(stmt, *candidate, func);
 		return;
 	}
@@ -3901,8 +3901,8 @@ PackedEffects packed_effects(const IRInstruction& instr, const IRStringTable& st
 	const std::function<IRInstruction::TypeHint(int)>& type_of)
 {
 	PackedEffects effects;
-	const auto& operands = instr.operands;
-	auto reach = [&](size_t index) -> uint32_t {
+	const SmallVector<IRValue, 3>& operands = instr.operands;
+	const std::function<uint32_t(size_t)> reach = [&](size_t index) -> uint32_t {
 		if (index >= operands.size() || operands[index].type != IRValue::Type::REGISTER) {
 			return 0;
 		}
@@ -3911,7 +3911,7 @@ PackedEffects packed_effects(const IRInstruction& instr, const IRStringTable& st
 	// Registers the instruction reads from operand `first` on; a destination is not
 	// read (and its type is not known until after the instruction).
 	const IROperandSignature& signature = ir_opcode_info(instr.opcode).signature;
-	auto reach_from = [&](size_t first) {
+	const std::function<uint32_t(size_t)> reach_from = [&](size_t first) -> uint32_t {
 		uint32_t mask = 0;
 		for (size_t i = first; i < operands.size(); i++) {
 			if (signature.kind_at(i) != IROperandKind::DST) {
@@ -3920,12 +3920,12 @@ PackedEffects packed_effects(const IRInstruction& instr, const IRStringTable& st
 		}
 		return mask;
 	};
-	auto everything = [&]() {
+	const std::function<void()> everything = [&]() {
 		effects.reads = PACKED_REACH_ALL;
 		effects.writes = PACKED_REACH_ALL;
 	};
 	// A value that may be an Object may run a script (to_string, a getter).
-	auto reads_values = [&](uint32_t mask) {
+	const std::function<void(uint32_t)> reads_values = [&](uint32_t mask) {
 		effects.reads |= mask;
 		if (mask & PACKED_REACH_ALL) {
 			effects.writes = PACKED_REACH_ALL;
@@ -4155,7 +4155,7 @@ std::unordered_set<int> plain_registers(const std::vector<IRInstruction>& instru
 	std::unordered_map<int, IRInstruction::TypeHint> types = entry_types;
 	size_t next_log = 0;
 	size_t next_cold = 0;
-	auto value_type = [](IRInstruction::TypeHint type) {
+	const std::function<bool(IRInstruction::TypeHint)> value_type = [](IRInstruction::TypeHint type) {
 		return type == PACKED_INERT_CONTAINER || (type >= int(Variant::NIL) && type < int(Variant::OBJECT));
 	};
 	for (size_t i = begin; i < end; i++) {
@@ -4170,16 +4170,16 @@ std::unordered_set<int> plain_registers(const std::vector<IRInstruction>& instru
 			continue;
 		}
 		const IRInstruction& instr = instructions[i];
-		const auto& operands = instr.operands;
-		auto type_of = [&](int reg) {
-			auto it = types.find(reg);
+		const SmallVector<IRValue, 3>& operands = instr.operands;
+		const std::function<IRInstruction::TypeHint(int)> type_of = [&](int reg) {
+			const std::unordered_map<int, IRInstruction::TypeHint>::const_iterator it = types.find(reg);
 			return it != types.end() ? it->second : IRInstruction::TypeHint_NONE;
 		};
-		auto reg_at = [&](size_t index) {
+		const std::function<int(size_t)> reg_at = [&](size_t index) -> int {
 			return index < operands.size() && operands[index].type == IRValue::Type::REGISTER
 				? operands[index].reg_index() : -1;
 		};
-		auto mark = [&](size_t index) {
+		const std::function<void(size_t)> mark = [&](size_t index) {
 			if (const int reg = reg_at(index); reg >= 0) {
 				mutated.insert(reg);
 			}
@@ -4223,7 +4223,7 @@ std::unordered_set<int> plain_registers(const std::vector<IRInstruction>& instru
 			continue;
 		}
 		Def def { Rule::NEVER, {} };
-		auto from_sources = [&](size_t first) {
+		const std::function<void(size_t)> from_sources = [&](size_t first) {
 			def.rule = Rule::IF_SOURCES;
 			const IROperandSignature& signature = ir_opcode_info(instr.opcode).signature;
 			for (size_t index = first; index < operands.size(); index++) {
@@ -4234,7 +4234,7 @@ std::unordered_set<int> plain_registers(const std::vector<IRInstruction>& instru
 		};
 		// A receiver that is a value, a packed array or a String answers with a
 		// value or a fresh array; so does one this pass already counts as plain.
-		auto plain_receiver = [&](int reg) {
+		const std::function<void(int)> plain_receiver = [&](int reg) {
 			const IRInstruction::TypeHint type = type_of(reg);
 			def.rule = Rule::IF_SOURCES;
 			if (value_type(type) || (type >= int(Variant::PACKED_BYTE_ARRAY) && type <= int(Variant::PACKED_VECTOR4_ARRAY))) {
@@ -4358,9 +4358,10 @@ std::unordered_set<int> plain_registers(const std::vector<IRInstruction>& instru
 	}
 
 	std::unordered_set<int> plain;
-	for (const auto& [reg, list] : defs) {
+	for (const std::pair<const int, std::vector<Def>>& entry : defs) {
+		const int reg = entry.first;
 		bool possible = !(containers.count(reg) && mutated.count(reg));
-		for (const Def& def : list) {
+		for (const Def& def : entry.second) {
 			possible = possible && def.rule != Rule::NEVER;
 		}
 		if (possible) {
@@ -4369,11 +4370,11 @@ std::unordered_set<int> plain_registers(const std::vector<IRInstruction>& instru
 	}
 	for (bool changed = true; changed;) {
 		changed = false;
-		for (auto it = plain.begin(); it != plain.end();) {
+		for (std::unordered_set<int>::iterator it = plain.begin(); it != plain.end();) {
 			bool keep = true;
 			for (const Def& def : defs[*it]) {
-				for (const auto& [source, type] : def.sources) {
-					if (!value_type(type) && plain.count(source) == 0) {
+				for (const std::pair<int, IRInstruction::TypeHint>& source : def.sources) {
+					if (!value_type(source.second) && plain.count(source.first) == 0) {
 						keep = false;
 					}
 				}
@@ -4446,32 +4447,32 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 	bool refused = false;
 	bool unknown_trip = false;
 	size_t next_order = 0;
-	auto use = [&](const std::string& name) -> Use& {
-		auto [it, inserted] = uses.try_emplace(name);
-		if (inserted) {
-			it->second.order = next_order++;
+	const std::function<Use&(const std::string&)> use = [&](const std::string& name) -> Use& {
+		const std::pair<std::unordered_map<std::string, Use>::iterator, bool> found = uses.try_emplace(name);
+		if (found.second) {
+			found.first->second.order = next_order++;
 		}
-		return it->second;
+		return found.first->second;
 	};
-	auto variable_name = [](const Expr* expr) -> const std::string* {
-		auto* variable = dynamic_cast<const VariableExpr*>(expr);
+	const std::function<const std::string*(const Expr*)> variable_name = [](const Expr* expr) -> const std::string* {
+		const VariableExpr* variable = dynamic_cast<const VariableExpr*>(expr);
 		return variable != nullptr ? &variable->name : nullptr;
 	};
 	// Weights multiply by constant trip counts; saturate rather than overflow.
-	auto times = [](int64_t weight, int64_t trip) {
+	const std::function<int64_t(int64_t, int64_t)> times = [](int64_t weight, int64_t trip) -> int64_t {
 		return trip > 0 && weight > (int64_t(1) << 40) / trip ? (int64_t(1) << 40) : weight * trip;
 	};
 
 	std::function<void(const Expr*, int64_t)> expression;
 	std::function<void(const Stmt*, int64_t)> statement;
 	std::function<void(const MatchPattern*, int64_t)> pattern;
-	auto statements = [&](const std::vector<StmtPtr>& body, int64_t weight) {
-		for (const auto& body_stmt : body) {
+	const std::function<void(const std::vector<StmtPtr>&, int64_t)> statements = [&](const std::vector<StmtPtr>& body, int64_t weight) {
+		for (const StmtPtr& body_stmt : body) {
 			statement(body_stmt.get(), weight);
 		}
 	};
 	// The walk `for x in v` reads every element: allowed, an unknown trip count.
-	auto iterable = [&](const Expr* expr, int64_t weight) {
+	const std::function<void(const Expr*, int64_t)> iterable = [&](const Expr* expr, int64_t weight) {
 		if (const std::string* name = variable_name(expr)) {
 			use(*name).accesses += weight;
 			unknown_trip = true;
@@ -4484,17 +4485,17 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 		if (expr == nullptr || refused) {
 			return;
 		}
-		if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
+		if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(expr)) {
 			// A bare use: the value goes somewhere the copy cannot follow.
 			use(variable->name).escapes = true;
-		} else if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+		} else if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
 			if (const std::string* name = variable_name(index->object.get())) {
 				use(*name).accesses += weight;
 			} else {
 				expression(index->object.get(), weight);
 			}
 			expression(index->index.get(), weight);
-		} else if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		} else if (const MemberCallExpr* member = dynamic_cast<const MemberCallExpr*>(expr)) {
 			const std::string* name = variable_name(member->object.get());
 			if (name != nullptr && member->is_method_call && !member->safe &&
 				member->arguments.empty() &&
@@ -4503,36 +4504,36 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 			} else {
 				expression(member->object.get(), weight);
 			}
-			for (const auto& argument : member->arguments) {
+			for (const ExprPtr& argument : member->arguments) {
 				expression(argument.get(), weight);
 			}
-		} else if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
+		} else if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
 			// A Callable local called by name.
 			use(call->function_name).escapes = true;
-			for (const auto& argument : call->arguments) {
+			for (const ExprPtr& argument : call->arguments) {
 				expression(argument.get(), weight);
 			}
-		} else if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		} else if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
 			expression(binary->left.get(), weight);
 			expression(binary->right.get(), weight);
-		} else if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		} else if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
 			expression(unary->operand.get(), weight);
-		} else if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		} else if (const TernaryExpr* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
 			expression(ternary->condition.get(), weight);
 			expression(ternary->true_value.get(), weight);
 			expression(ternary->false_value.get(), weight);
-		} else if (auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+		} else if (const CastExpr* cast = dynamic_cast<const CastExpr*>(expr)) {
 			expression(cast->value.get(), weight);
-		} else if (auto* test = dynamic_cast<const TypeTestExpr*>(expr)) {
+		} else if (const TypeTestExpr* test = dynamic_cast<const TypeTestExpr*>(expr)) {
 			expression(test->value.get(), weight);
-		} else if (auto* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
-			for (const auto& element : array->elements) {
+		} else if (const ArrayLiteralExpr* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+			for (const ExprPtr& element : array->elements) {
 				expression(element.get(), weight);
 			}
-		} else if (auto* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
-			for (const auto& [key, value] : dictionary->elements) {
-				expression(key.get(), weight);
-				expression(value.get(), weight);
+		} else if (const DictionaryLiteralExpr* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+			for (const std::pair<ExprPtr, ExprPtr>& entry : dictionary->elements) {
+				expression(entry.first.get(), weight);
+				expression(entry.second.get(), weight);
 			}
 		} else if (dynamic_cast<const LiteralExpr*>(expr) == nullptr) {
 			// await (a suspension), a lambda (lowered once per attempt, and it may
@@ -4549,14 +4550,14 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 			declared.insert(match_pattern->name);
 		}
 		expression(match_pattern->value.get(), weight);
-		for (const auto& element : match_pattern->elements) {
+		for (const MatchPatternPtr& element : match_pattern->elements) {
 			pattern(element.get(), weight);
 		}
-		for (const auto& entry : match_pattern->entries) {
+		for (const MatchPattern::Entry& entry : match_pattern->entries) {
 			expression(entry.key.get(), weight);
 			pattern(entry.value.get(), weight);
 		}
-		for (const auto& entry : match_pattern->struct_entries) {
+		for (const MatchPattern::StructEntry& entry : match_pattern->struct_entries) {
 			pattern(entry.value.get(), weight);
 		}
 	};
@@ -4565,15 +4566,15 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 		if (stmt == nullptr || refused) {
 			return;
 		}
-		if (auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+		if (const ExprStmt* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
 			expression(expr_stmt->expression.get(), weight);
-		} else if (auto* declaration = dynamic_cast<const VarDeclStmt*>(stmt)) {
+		} else if (const VarDeclStmt* declaration = dynamic_cast<const VarDeclStmt*>(stmt)) {
 			declared.insert(declaration->name);
 			expression(declaration->initializer.get(), weight);
-		} else if (auto* assignment = dynamic_cast<const AssignStmt*>(stmt)) {
+		} else if (const AssignStmt* assignment = dynamic_cast<const AssignStmt*>(stmt)) {
 			if (!assignment->name.empty()) {
 				use(assignment->name).escapes = true;
-			} else if (auto* index = dynamic_cast<const IndexExpr*>(assignment->target.get());
+			} else if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(assignment->target.get());
 				index != nullptr && variable_name(index->object.get()) != nullptr) {
 				Use& target = use(*variable_name(index->object.get()));
 				target.accesses += weight;
@@ -4583,9 +4584,9 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 				expression(assignment->target.get(), weight);
 			}
 			expression(assignment->value.get(), weight);
-		} else if (auto* returned = dynamic_cast<const ReturnStmt*>(stmt)) {
+		} else if (const ReturnStmt* returned = dynamic_cast<const ReturnStmt*>(stmt)) {
 			expression(returned->value.get(), weight);
-		} else if (auto* branch = dynamic_cast<const IfStmt*>(stmt)) {
+		} else if (const IfStmt* branch = dynamic_cast<const IfStmt*>(stmt)) {
 			expression(branch->condition.get(), weight);
 			if (branch->binding) {
 				declared.insert(branch->binding->name);
@@ -4593,14 +4594,14 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 			}
 			statements(branch->then_branch, weight);
 			statements(branch->else_branch, weight);
-		} else if (auto* while_loop = dynamic_cast<const WhileStmt*>(stmt)) {
+		} else if (const WhileStmt* while_loop = dynamic_cast<const WhileStmt*>(stmt)) {
 			unknown_trip = true;
 			expression(while_loop->condition.get(), weight);
 			statements(while_loop->body, weight);
-		} else if (auto* for_loop = dynamic_cast<const ForStmt*>(stmt)) {
+		} else if (const ForStmt* for_loop = dynamic_cast<const ForStmt*>(stmt)) {
 			declared.insert(for_loop->variable);
 			int64_t trip = -1;
-			if (auto* literal = dynamic_cast<const LiteralExpr*>(for_loop->iterable.get());
+			if (const LiteralExpr* literal = dynamic_cast<const LiteralExpr*>(for_loop->iterable.get());
 				literal != nullptr && literal->lit_type == LiteralExpr::Type::INTEGER) {
 				trip = std::max<int64_t>(0, std::get<int64_t>(literal->value));
 			} else {
@@ -4608,10 +4609,10 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 			}
 			iterable(for_loop->iterable.get(), weight);
 			statements(for_loop->body, trip >= 0 ? times(weight, trip) : weight);
-		} else if (auto* match = dynamic_cast<const MatchStmt*>(stmt)) {
+		} else if (const MatchStmt* match = dynamic_cast<const MatchStmt*>(stmt)) {
 			expression(match->subject.get(), weight);
-			for (const auto& arm : match->branches) {
-				for (const auto& arm_pattern : arm.patterns) {
+			for (const MatchStmt::Branch& arm : match->branches) {
+				for (const MatchPatternPtr& arm_pattern : arm.patterns) {
 					pattern(arm_pattern.get(), weight);
 				}
 				expression(arm.guard.get(), weight);
@@ -4625,7 +4626,7 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 		}
 	};
 
-	if (auto* for_loop = dynamic_cast<const ForStmt*>(loop)) {
+	if (const ForStmt* for_loop = dynamic_cast<const ForStmt*>(loop)) {
 		declared.insert(for_loop->variable);
 		if (variable_name(for_loop->iterable.get()) != nullptr) {
 			use(*variable_name(for_loop->iterable.get())).accesses += 1;
@@ -4633,7 +4634,7 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 			expression(for_loop->iterable.get(), 1);
 		}
 		statements(for_loop->body, 1);
-	} else if (auto* while_loop = dynamic_cast<const WhileStmt*>(loop)) {
+	} else if (const WhileStmt* while_loop = dynamic_cast<const WhileStmt*>(loop)) {
 		expression(while_loop->condition.get(), 1);
 		statements(while_loop->body, 1);
 	}
@@ -4644,7 +4645,9 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 	}
 	std::vector<std::pair<size_t, FunctionContext::PackedCandidate>> ordered;
 	int64_t accesses = 0;
-	for (const auto& [name, name_use] : uses) {
+	for (const std::pair<const std::string, Use>& entry : uses) {
+		const std::string& name = entry.first;
+		const Use& name_use = entry.second;
 		if (name_use.escapes || name_use.accesses == 0 || declared.count(name) != 0) {
 			continue;
 		}
@@ -4665,8 +4668,9 @@ CodeGenerator::PackedScan CodeGenerator::scan_packed_region(const Stmt* loop, Fu
 		accesses += name_use.accesses;
 	}
 	std::sort(ordered.begin(), ordered.end(),
-		[](const auto& a, const auto& b) { return a.first < b.first; });
-	for (auto& entry : ordered) {
+		[](const std::pair<size_t, FunctionContext::PackedCandidate>& a,
+			const std::pair<size_t, FunctionContext::PackedCandidate>& b) { return a.first < b.first; });
+	for (std::pair<size_t, FunctionContext::PackedCandidate>& entry : ordered) {
 		scan.candidates.push_back(std::move(entry.second));
 	}
 	scan.accesses_per_pass = unknown_trip ? -1 : accesses;
@@ -4680,26 +4684,26 @@ int CodeGenerator::gen_packed_trip_count(const Stmt* loop, int64_t accesses_per_
 	FunctionContext& func)
 {
 	const Expr* bound = nullptr;
-	if (auto* for_loop = dynamic_cast<const ForStmt*>(loop)) {
+	if (const ForStmt* for_loop = dynamic_cast<const ForStmt*>(loop)) {
 		bound = for_loop->iterable.get();
-		if (auto* call = dynamic_cast<const CallExpr*>(bound);
+		if (const CallExpr* call = dynamic_cast<const CallExpr*>(bound);
 			call != nullptr && call->function_name == "range" && call->arguments.size() == 1) {
 			bound = call->arguments[0].get();
 		}
 	}
 	if (accesses_per_pass > 0 && bound != nullptr) {
-		if (auto* literal = dynamic_cast<const LiteralExpr*>(bound);
+		if (const LiteralExpr* literal = dynamic_cast<const LiteralExpr*>(bound);
 			literal != nullptr && literal->lit_type == LiteralExpr::Type::INTEGER) {
 			const int64_t trip = std::max<int64_t>(0, std::get<int64_t>(literal->value));
 			const int64_t cap = int64_t(1) << 40;
 			return gen_int_immediate(trip > cap / accesses_per_pass ? cap : trip * accesses_per_pass, func);
 		}
-		if (auto* variable = dynamic_cast<const VariableExpr*>(bound)) {
+		if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(bound)) {
 			if (Variable* local = find_variable(func, variable->name);
 				local != nullptr && get_register_type(func, local->register_num) == Variant::INT) {
 				const int per_pass = gen_int_immediate(accesses_per_pass, func);
 				const int expected = alloc_register(func);
-				auto& multiply = func.ir.instructions.emplace_back(IROpcode::MUL, IRValue::reg(expected),
+				IRInstruction& multiply = func.ir.instructions.emplace_back(IROpcode::MUL, IRValue::reg(expected),
 					IRValue::reg(local->register_num), IRValue::reg(per_pass));
 				multiply.type_hint = Variant::INT;
 				set_register_type(func, expected, Variant::INT);
@@ -4711,7 +4715,7 @@ int CodeGenerator::gen_packed_trip_count(const Stmt* loop, int64_t accesses_per_
 }
 
 void CodeGenerator::gen_loop_statement(const Stmt* loop, FunctionContext& func) {
-	if (auto* for_loop = dynamic_cast<const ForStmt*>(loop)) {
+	if (const ForStmt* for_loop = dynamic_cast<const ForStmt*>(loop)) {
 		gen_for(for_loop, func);
 	} else {
 		gen_while(static_cast<const WhileStmt*>(loop), func);
@@ -4740,8 +4744,9 @@ void CodeGenerator::emit_packed_region_exit(FunctionContext& func) {
 	if (func.packed_region == nullptr) {
 		return;
 	}
-	const auto& candidates = func.packed_region->candidates;
-	for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
+	const std::vector<FunctionContext::PackedCandidate>& candidates = func.packed_region->candidates;
+	for (std::vector<FunctionContext::PackedCandidate>::const_reverse_iterator it = candidates.rbegin();
+		it != candidates.rend(); ++it) {
 		emit_packed_release(*it, true, func);
 	}
 }
@@ -4778,7 +4783,7 @@ bool CodeGenerator::try_packed_region(const Stmt* loop, FunctionContext& func) {
 		// Registers are slots by number; the entry's are reused, not one per candidate.
 		const int status = alloc_register(func);
 		for (size_t i = 0; i < count; i++) {
-			const auto& candidate = region.candidates[i];
+			const FunctionContext::PackedCandidate& candidate = region.candidates[i];
 			IRInstruction acquire(IROpcode::CALL_SYSCALL);
 			acquire.operands.push_back(IRValue::reg(status));
 			acquire.operands.push_back(IRValue::imm(ECALL_PACKED_ACQUIRE));
@@ -4798,12 +4803,12 @@ bool CodeGenerator::try_packed_region(const Stmt* loop, FunctionContext& func) {
 		const int right = alloc_register(func);
 		const int same = alloc_register(func);
 		for (size_t w = 0; w < count; w++) {
-			const auto& written = region.candidates[w];
+			const FunctionContext::PackedCandidate& written = region.candidates[w];
 			if (!written.written) {
 				continue;
 			}
 			for (size_t o = 0; o < count; o++) {
-				const auto& other = region.candidates[o];
+				const FunctionContext::PackedCandidate& other = region.candidates[o];
 				if (o == w || other.type != written.type || (other.written && o < w)) {
 					continue;
 				}
@@ -4821,7 +4826,7 @@ bool CodeGenerator::try_packed_region(const Stmt* loop, FunctionContext& func) {
 		}
 
 		// Neither the data pointer nor the size of a copy changes inside the region.
-		for (auto& candidate : region.candidates) {
+		for (FunctionContext::PackedCandidate& candidate : region.candidates) {
 			candidate.data_reg = alloc_register(func);
 			func.ir.instructions.emplace_back(IROpcode::PACKED_DATA, IRValue::reg(candidate.data_reg),
 				IRValue::imm(candidate.token)).type_hint = Variant::INT;
@@ -4928,7 +4933,7 @@ CodeGenerator::FunctionContext::PackedCandidate* CodeGenerator::packed_candidate
 	if (func.packed_region == nullptr) {
 		return nullptr;
 	}
-	auto* variable = dynamic_cast<const VariableExpr*>(object);
+	const VariableExpr* variable = dynamic_cast<const VariableExpr*>(object);
 	if (variable == nullptr) {
 		return nullptr;
 	}
@@ -4936,7 +4941,7 @@ CodeGenerator::FunctionContext::PackedCandidate* CodeGenerator::packed_candidate
 	if (local == nullptr) {
 		return nullptr;
 	}
-	for (auto& candidate : func.packed_region->candidates) {
+	for (FunctionContext::PackedCandidate& candidate : func.packed_region->candidates) {
 		if (candidate.reg == local->register_num && candidate.name == variable->name) {
 			return &candidate;
 		}
@@ -4973,7 +4978,7 @@ void CodeGenerator::emit_packed_oob(const FunctionContext::PackedCandidate& cand
 void CodeGenerator::emit_packed_oob_blocks(const FunctionContext::PackedRegion& region,
 	const std::string& end_label, FunctionContext& func)
 {
-	for (const auto& pending : region.oob) {
+	for (const FunctionContext::PackedRegion::PendingOob& pending : region.oob) {
 		const size_t begin = func.ir.instructions.size();
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(pending.label));
 		if (pending.value < 0) {
@@ -5042,7 +5047,7 @@ void CodeGenerator::gen_packed_store(FunctionContext::PackedCandidate& candidate
 	const std::string oob_label = make_label("packed_oob");
 	const int index = emit_packed_index(candidate, index_reg, oob_label, func);
 	emit_packed_oob(candidate, index_reg, value_reg, oob_label, func);
-	auto store = [&](int value, IRInstruction::TypeHint type) {
+	const std::function<void(int, IRInstruction::TypeHint)> store = [&](int value, IRInstruction::TypeHint type) {
 		emit_four(func.ir.instructions, IROpcode::PACKED_SET, IRValue::imm(candidate.type),
 			IRValue::reg(candidate.data_reg), IRValue::reg(index), IRValue::reg(value)).type_hint = type;
 	};
@@ -5056,7 +5061,7 @@ void CodeGenerator::gen_packed_store(FunctionContext::PackedCandidate& candidate
 	// what it stored is read back into the copy, which stays in step.
 	const std::string slow_label = make_label("packed_store_host");
 	const std::string done_label = make_label("packed_stored");
-	auto tag_is = [&](IRInstruction::TypeHint type) {
+	const std::function<int(IRInstruction::TypeHint)> tag_is = [&](IRInstruction::TypeHint type) -> int {
 		const int test = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test), IRValue::reg(value_reg),
 			IRValue::imm(int64_t(type)));
@@ -5136,7 +5141,7 @@ void CodeGenerator::gen_packed_walk(const ForStmt* stmt, FunctionContext::Packed
 	declare_variable(func, stmt->variable, element, false, stmt);
 
 	push_scope(func);
-	for (const auto& body_stmt : stmt->body) {
+	for (const StmtPtr& body_stmt : stmt->body) {
 		gen_stmt(body_stmt.get(), func);
 	}
 	pop_scope(func);
@@ -8576,7 +8581,7 @@ static constexpr const char* NATIVE_BASE_KEY = "@base";
 int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& func) {
 	if (func.packed_region != nullptr && expr->is_method_call && !expr->safe &&
 		expr->arguments.empty() && (expr->member_name == "size" || expr->member_name == "is_empty")) {
-		if (auto* candidate = packed_candidate(expr->object.get(), func)) {
+		if (FunctionContext::PackedCandidate* candidate = packed_candidate(expr->object.get(), func)) {
 			return gen_packed_size(*candidate, expr->member_name == "is_empty", func);
 		}
 	}
@@ -9281,7 +9286,7 @@ bool CodeGenerator::is_array_element_access(int obj_reg, int idx_reg, FunctionCo
 }
 
 int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
-	if (auto* candidate = packed_candidate(expr->object.get(), func)) {
+	if (FunctionContext::PackedCandidate* candidate = packed_candidate(expr->object.get(), func)) {
 		return gen_packed_read(*candidate, expr, func);
 	}
 	int obj_reg = gen_expr(expr->object.get(), func);

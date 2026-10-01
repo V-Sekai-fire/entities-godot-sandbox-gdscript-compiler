@@ -121,14 +121,15 @@ struct Locals {
 	std::unordered_map<std::string, std::string> types;
 
 	void declare(const std::string& name, const std::string& type) {
-		auto [it, inserted] = types.try_emplace(name, type);
-		if (!inserted && it->second != type) {
-			it->second.clear();
+		const std::pair<std::unordered_map<std::string, std::string>::iterator, bool> found =
+			types.try_emplace(name, type);
+		if (!found.second && found.first->second != type) {
+			found.first->second.clear();
 		}
 	}
 	bool has(const std::string& name) const { return types.count(name) != 0; }
 	std::string type_of(const std::string& name) const {
-		auto it = types.find(name);
+		const std::unordered_map<std::string, std::string>::const_iterator it = types.find(name);
 		return it != types.end() ? it->second : std::string();
 	}
 };
@@ -151,20 +152,20 @@ std::string declared_type(const VarDeclStmt& decl) {
 	if (!decl.initializer) {
 		return std::string();
 	}
-	if (auto* call = dynamic_cast<const CallExpr*>(decl.initializer.get())) {
+	if (const CallExpr* call = dynamic_cast<const CallExpr*>(decl.initializer.get())) {
 		if (is_packed(call->function_name) || is_value_type(call->function_name)) {
 			return call->function_name;
 		}
 	}
 	// Vector2.ZERO, Color.WHITE: a constant of the value type it is read from.
-	if (auto* member = dynamic_cast<const MemberCallExpr*>(decl.initializer.get())) {
-		auto* owner = dynamic_cast<const VariableExpr*>(member->object.get());
+	if (const MemberCallExpr* member = dynamic_cast<const MemberCallExpr*>(decl.initializer.get())) {
+		const VariableExpr* owner = dynamic_cast<const VariableExpr*>(member->object.get());
 		if (owner != nullptr && !member->is_method_call && is_value_type(owner->name) &&
 			!owner->name.empty() && std::isupper(static_cast<unsigned char>(member->member_name[0]))) {
 			return owner->name;
 		}
 	}
-	if (auto* literal = dynamic_cast<const LiteralExpr*>(decl.initializer.get())) {
+	if (const LiteralExpr* literal = dynamic_cast<const LiteralExpr*>(decl.initializer.get())) {
 		switch (literal->lit_type) {
 			case LiteralExpr::Type::INTEGER: return "int";
 			case LiteralExpr::Type::FLOAT: return "float";
@@ -184,49 +185,50 @@ void collect_pattern(const MatchPattern* pattern, Locals& locals) {
 	if (pattern->kind == MatchPattern::Kind::BIND) {
 		locals.declare(pattern->name, std::string());
 	}
-	for (const auto& element : pattern->elements) {
+	for (const MatchPatternPtr& element : pattern->elements) {
 		collect_pattern(element.get(), locals);
 	}
-	for (const auto& entry : pattern->entries) {
+	for (const MatchPattern::Entry& entry : pattern->entries) {
 		collect_pattern(entry.value.get(), locals);
 	}
-	for (const auto& entry : pattern->struct_entries) {
+	for (const MatchPattern::StructEntry& entry : pattern->struct_entries) {
 		collect_pattern(entry.value.get(), locals);
 	}
 }
 
 void collect_locals(const std::vector<StmtPtr>& body, Locals& locals) {
-	for (const auto& stmt : body) {
-		if (auto* decl = dynamic_cast<const VarDeclStmt*>(stmt.get())) {
+	for (const StmtPtr& stmt : body) {
+		if (const VarDeclStmt* decl = dynamic_cast<const VarDeclStmt*>(stmt.get())) {
 			locals.declare(decl->name, declared_type(*decl));
-		} else if (auto* branch = dynamic_cast<const IfStmt*>(stmt.get())) {
+		} else if (const IfStmt* branch = dynamic_cast<const IfStmt*>(stmt.get())) {
 			if (branch->binding) {
 				locals.declare(branch->binding->name, std::string());
 			}
 			collect_locals(branch->then_branch, locals);
 			collect_locals(branch->else_branch, locals);
-		} else if (auto* loop = dynamic_cast<const WhileStmt*>(stmt.get())) {
+		} else if (const WhileStmt* loop = dynamic_cast<const WhileStmt*>(stmt.get())) {
 			collect_locals(loop->body, locals);
-		} else if (auto* loop = dynamic_cast<const ForStmt*>(stmt.get())) {
+		} else if (const ForStmt* loop = dynamic_cast<const ForStmt*>(stmt.get())) {
 			// The element of a typed packed array, the counter of a numeric loop.
 			std::string type;
-			if (auto* walked = dynamic_cast<const VariableExpr*>(loop->iterable.get())) {
+			if (const VariableExpr* walked = dynamic_cast<const VariableExpr*>(loop->iterable.get())) {
 				const std::string container = locals.type_of(walked->name);
-				auto element = packed_elements().find(container);
+				const std::unordered_map<std::string, std::string>::const_iterator element =
+					packed_elements().find(container);
 				type = element != packed_elements().end() ? element->second
 					: container == "int" ? "int" : std::string();
-			} else if (auto* literal = dynamic_cast<const LiteralExpr*>(loop->iterable.get());
+			} else if (const LiteralExpr* literal = dynamic_cast<const LiteralExpr*>(loop->iterable.get());
 				literal != nullptr && literal->lit_type == LiteralExpr::Type::INTEGER) {
 				type = "int";
-			} else if (auto* call = dynamic_cast<const CallExpr*>(loop->iterable.get());
+			} else if (const CallExpr* call = dynamic_cast<const CallExpr*>(loop->iterable.get());
 				call != nullptr && call->function_name == "range") {
 				type = "int";
 			}
 			locals.declare(loop->variable, type);
 			collect_locals(loop->body, locals);
-		} else if (auto* match = dynamic_cast<const MatchStmt*>(stmt.get())) {
-			for (const auto& arm : match->branches) {
-				for (const auto& pattern : arm.patterns) {
+		} else if (const MatchStmt* match = dynamic_cast<const MatchStmt*>(stmt.get())) {
+			for (const MatchStmt::Branch& arm : match->branches) {
+				for (const MatchPatternPtr& pattern : arm.patterns) {
 					collect_pattern(pattern.get(), locals);
 				}
 				collect_locals(arm.body, locals);
@@ -253,7 +255,7 @@ public:
 	bool writes = false;
 
 	void body(const std::vector<StmtPtr>& statements) {
-		for (const auto& stmt : statements) {
+		for (const StmtPtr& stmt : statements) {
 			statement(stmt.get());
 		}
 	}
@@ -265,7 +267,7 @@ public:
 		if (dynamic_cast<const LiteralExpr*>(expr) != nullptr) {
 			return;
 		}
-		if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
+		if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(expr)) {
 			if (variable->name == m_array) {
 				fail(); // the array as a value: it may go anywhere
 			} else if (!m_locals.has(variable->name) && !m_names.constants.count(variable->name) &&
@@ -274,26 +276,26 @@ public:
 			}
 			return;
 		}
-		if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+		if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
 			indexed(index->object.get());
 			expression(index->index.get());
 			return;
 		}
-		if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		if (const MemberCallExpr* member = dynamic_cast<const MemberCallExpr*>(expr)) {
 			member_access(member);
 			return;
 		}
-		if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
+		if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
 			if (!is_pure_builtin(call->function_name) || m_locals.has(call->function_name)) {
 				fail();
 				return;
 			}
-			for (const auto& argument : call->arguments) {
+			for (const ExprPtr& argument : call->arguments) {
 				expression(argument.get());
 			}
 			return;
 		}
-		if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
 			// `x in object` may ask a script; the rest are engine operators.
 			if (binary->op == BinaryExpr::Op::IN && static_type(binary->right.get()).empty()) {
 				fail();
@@ -303,34 +305,34 @@ public:
 			expression(binary->right.get());
 			return;
 		}
-		if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
 			expression(unary->operand.get());
 			return;
 		}
-		if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		if (const TernaryExpr* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
 			expression(ternary->condition.get());
 			expression(ternary->true_value.get());
 			expression(ternary->false_value.get());
 			return;
 		}
-		if (auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+		if (const CastExpr* cast = dynamic_cast<const CastExpr*>(expr)) {
 			expression(cast->value.get());
 			return;
 		}
-		if (auto* test = dynamic_cast<const TypeTestExpr*>(expr)) {
+		if (const TypeTestExpr* test = dynamic_cast<const TypeTestExpr*>(expr)) {
 			expression(test->value.get());
 			return;
 		}
-		if (auto* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
-			for (const auto& element : array->elements) {
+		if (const ArrayLiteralExpr* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+			for (const ExprPtr& element : array->elements) {
 				expression(element.get());
 			}
 			return;
 		}
-		if (auto* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
-			for (const auto& [key, value] : dictionary->elements) {
-				expression(key.get());
-				expression(value.get());
+		if (const DictionaryLiteralExpr* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+			for (const std::pair<ExprPtr, ExprPtr>& entry : dictionary->elements) {
+				expression(entry.first.get());
+				expression(entry.second.get());
 			}
 			return;
 		}
@@ -341,31 +343,31 @@ public:
 		if (stmt == nullptr || !ok) {
 			return;
 		}
-		if (auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+		if (const ExprStmt* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
 			expression(expr_stmt->expression.get());
-		} else if (auto* decl = dynamic_cast<const VarDeclStmt*>(stmt)) {
+		} else if (const VarDeclStmt* decl = dynamic_cast<const VarDeclStmt*>(stmt)) {
 			if (decl->name == m_array || decl->has_accessors()) {
 				fail();
 				return;
 			}
 			expression(decl->initializer.get());
-		} else if (auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+		} else if (const AssignStmt* assign = dynamic_cast<const AssignStmt*>(stmt)) {
 			if (!assign->name.empty()) {
 				if (assign->name == m_array || !m_locals.has(assign->name)) {
 					fail(); // replacing the array, or a member's setter
 					return;
 				}
-			} else if (auto* index = dynamic_cast<const IndexExpr*>(assign->target.get())) {
-				if (auto* object = dynamic_cast<const VariableExpr*>(index->object.get());
+			} else if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(assign->target.get())) {
+				if (const VariableExpr* object = dynamic_cast<const VariableExpr*>(index->object.get());
 					object != nullptr && object->name == m_array) {
 					writes = true;
 				} else {
 					indexed(index->object.get());
 				}
 				expression(index->index.get());
-			} else if (auto* member = dynamic_cast<const MemberCallExpr*>(assign->target.get())) {
+			} else if (const MemberCallExpr* member = dynamic_cast<const MemberCallExpr*>(assign->target.get())) {
 				// A component of a local value (`c.r = x`) changes that copy only.
-				auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+				const VariableExpr* object = dynamic_cast<const VariableExpr*>(member->object.get());
 				if (member->is_method_call || object == nullptr ||
 					!is_value_type(m_locals.type_of(object->name))) {
 					fail();
@@ -376,9 +378,9 @@ public:
 				return;
 			}
 			expression(assign->value.get());
-		} else if (auto* returned = dynamic_cast<const ReturnStmt*>(stmt)) {
+		} else if (const ReturnStmt* returned = dynamic_cast<const ReturnStmt*>(stmt)) {
 			expression(returned->value.get());
-		} else if (auto* branch = dynamic_cast<const IfStmt*>(stmt)) {
+		} else if (const IfStmt* branch = dynamic_cast<const IfStmt*>(stmt)) {
 			expression(branch->condition.get());
 			if (branch->binding) {
 				if (branch->binding->name == m_array) {
@@ -389,25 +391,25 @@ public:
 			}
 			body(branch->then_branch);
 			body(branch->else_branch);
-		} else if (auto* loop = dynamic_cast<const WhileStmt*>(stmt)) {
+		} else if (const WhileStmt* loop = dynamic_cast<const WhileStmt*>(stmt)) {
 			expression(loop->condition.get());
 			body(loop->body);
-		} else if (auto* loop = dynamic_cast<const ForStmt*>(stmt)) {
+		} else if (const ForStmt* loop = dynamic_cast<const ForStmt*>(stmt)) {
 			if (loop->variable == m_array) {
 				fail();
 				return;
 			}
-			if (auto* walked = dynamic_cast<const VariableExpr*>(loop->iterable.get());
+			if (const VariableExpr* walked = dynamic_cast<const VariableExpr*>(loop->iterable.get());
 				walked != nullptr && walked->name == m_array) {
 				// Walking the same array again only reads it.
 			} else {
 				expression(loop->iterable.get());
 			}
 			body(loop->body);
-		} else if (auto* match = dynamic_cast<const MatchStmt*>(stmt)) {
+		} else if (const MatchStmt* match = dynamic_cast<const MatchStmt*>(stmt)) {
 			expression(match->subject.get());
-			for (const auto& arm : match->branches) {
-				for (const auto& pattern : arm.patterns) {
+			for (const MatchStmt::Branch& arm : match->branches) {
+				for (const MatchPatternPtr& pattern : arm.patterns) {
 					match_pattern(pattern.get());
 				}
 				expression(arm.guard.get());
@@ -437,32 +439,33 @@ private:
 			return;
 		}
 		expression(pattern->value.get());
-		for (const auto& element : pattern->elements) {
+		for (const MatchPatternPtr& element : pattern->elements) {
 			match_pattern(element.get());
 		}
-		for (const auto& entry : pattern->entries) {
+		for (const MatchPattern::Entry& entry : pattern->entries) {
 			expression(entry.key.get());
 			match_pattern(entry.value.get());
 		}
-		for (const auto& entry : pattern->struct_entries) {
+		for (const MatchPattern::StructEntry& entry : pattern->struct_entries) {
 			match_pattern(entry.value.get());
 		}
 	}
 
 	// The static type of a few simple expressions, "" otherwise.
 	std::string static_type(const Expr* expr) const {
-		if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
+		if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(expr)) {
 			if (variable->name == m_array) {
 				return m_array_type;
 			}
 			return m_locals.type_of(variable->name);
 		}
-		if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+		if (const IndexExpr* index = dynamic_cast<const IndexExpr*>(expr)) {
 			const std::string container = static_type(index->object.get());
-			auto it = packed_elements().find(container);
+			const std::unordered_map<std::string, std::string>::const_iterator it =
+				packed_elements().find(container);
 			return it != packed_elements().end() ? it->second : std::string();
 		}
-		if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
+		if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
 			if (is_value_type(call->function_name) || is_packed(call->function_name)) {
 				return call->function_name;
 			}
@@ -473,7 +476,7 @@ private:
 	// `object[...]`: the array itself, or a container that cannot be an Object
 	// (whose `[]` would be a property access a script could answer).
 	void indexed(const Expr* object) {
-		if (auto* variable = dynamic_cast<const VariableExpr*>(object);
+		if (const VariableExpr* variable = dynamic_cast<const VariableExpr*>(object);
 			variable != nullptr && variable->name == m_array) {
 			return;
 		}
@@ -484,7 +487,7 @@ private:
 			fail();
 			return;
 		}
-		if (auto* inner = dynamic_cast<const IndexExpr*>(object)) {
+		if (const IndexExpr* inner = dynamic_cast<const IndexExpr*>(object)) {
 			indexed(inner->object.get());
 			expression(inner->index.get());
 		}
@@ -495,7 +498,7 @@ private:
 			fail();
 			return;
 		}
-		auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+		const VariableExpr* object = dynamic_cast<const VariableExpr*>(member->object.get());
 		if (object != nullptr && object->name == m_array) {
 			if (!member->is_method_call || !member->arguments.empty() ||
 				(member->member_name != "size" && member->member_name != "is_empty")) {
@@ -506,7 +509,7 @@ private:
 		// Vector3.UP, Color.from_hsv(...), an enum's member.
 		if (object != nullptr && !m_locals.has(object->name) &&
 			(is_value_type(object->name) || m_names.enums.count(object->name))) {
-			for (const auto& argument : member->arguments) {
+			for (const ExprPtr& argument : member->arguments) {
 				expression(argument.get());
 			}
 			return;
@@ -524,7 +527,7 @@ private:
 			return;
 		}
 		expression(member->object.get());
-		for (const auto& argument : member->arguments) {
+		for (const ExprPtr& argument : member->arguments) {
 			expression(argument.get());
 		}
 	}
@@ -548,7 +551,7 @@ public:
 		}
 		for (const EnumDecl& decl : program.enums) {
 			m_names.enums.insert(decl.name);
-			for (const auto& member : decl.members) {
+			for (const EnumDecl::Member& member : decl.members) {
 				m_names.constants.insert(member.name);
 			}
 		}
@@ -579,7 +582,7 @@ public:
 			[](const Edit& a, const Edit& b) { return a.first < b.first; });
 		result.line_map.push_back(0);
 		int next = 1;
-		auto keep = [&](int line) {
+		const std::function<void(int)> keep = [&](int line) {
 			const Line& kept = m_lines[size_t(line - 1)];
 			result.source += kept.text + kept.ending;
 			result.line_map.push_back(line);
@@ -590,9 +593,9 @@ public:
 			}
 			const std::string& ending = m_lines[size_t(edit.first - 1)].ending.empty()
 				? std::string("\n") : m_lines[size_t(edit.first - 1)].ending;
-			for (const auto& [text, origin] : edit.lines) {
-				result.source += text + ending;
-				result.line_map.push_back(origin);
+			for (const std::pair<std::string, int>& line : edit.lines) {
+				result.source += line.first + ending;
+				result.line_map.push_back(line.second);
 			}
 			next = edit.last + 1;
 			result.notes.push_back(edit.note);
@@ -664,18 +667,18 @@ private:
 	}
 
 	void statements(const std::vector<StmtPtr>& body, const Locals& locals) {
-		for (const auto& stmt : body) {
-			if (auto* loop = dynamic_cast<const ForStmt*>(stmt.get())) {
+		for (const StmtPtr& stmt : body) {
+			if (const ForStmt* loop = dynamic_cast<const ForStmt*>(stmt.get())) {
 				walk(loop, locals);
 				statements(loop->body, locals);
-			} else if (auto* loop = dynamic_cast<const WhileStmt*>(stmt.get())) {
+			} else if (const WhileStmt* loop = dynamic_cast<const WhileStmt*>(stmt.get())) {
 				hoist_size(loop, locals);
 				statements(loop->body, locals);
-			} else if (auto* branch = dynamic_cast<const IfStmt*>(stmt.get())) {
+			} else if (const IfStmt* branch = dynamic_cast<const IfStmt*>(stmt.get())) {
 				statements(branch->then_branch, locals);
 				statements(branch->else_branch, locals);
-			} else if (auto* match = dynamic_cast<const MatchStmt*>(stmt.get())) {
-				for (const auto& arm : match->branches) {
+			} else if (const MatchStmt* match = dynamic_cast<const MatchStmt*>(stmt.get())) {
+				for (const MatchStmt::Branch& arm : match->branches) {
 					statements(arm.body, locals);
 				}
 			}
@@ -684,7 +687,7 @@ private:
 
 	// `for x in v:` over a packed array.
 	void walk(const ForStmt* loop, const Locals& locals) {
-		auto* walked = dynamic_cast<const VariableExpr*>(loop->iterable.get());
+		const VariableExpr* walked = dynamic_cast<const VariableExpr*>(loop->iterable.get());
 		if (walked == nullptr || !locals.has(walked->name) || loop->line <= 0 ||
 			loop->line > int(m_lines.size())) {
 			return;
@@ -774,22 +777,22 @@ private:
 		}
 		std::vector<std::string> arrays;
 		std::function<void(const Expr*)> find = [&](const Expr* expr) {
-			if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
-				auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+			if (const MemberCallExpr* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+				const VariableExpr* object = dynamic_cast<const VariableExpr*>(member->object.get());
 				if (object != nullptr && member->is_method_call && member->arguments.empty() &&
 					member->member_name == "size" && is_packed(locals.type_of(object->name)) &&
 					std::find(arrays.begin(), arrays.end(), object->name) == arrays.end()) {
 					arrays.push_back(object->name);
 				}
 				find(member->object.get());
-				for (const auto& argument : member->arguments) find(argument.get());
-			} else if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+				for (const ExprPtr& argument : member->arguments) find(argument.get());
+			} else if (const BinaryExpr* binary = dynamic_cast<const BinaryExpr*>(expr)) {
 				find(binary->left.get());
 				find(binary->right.get());
-			} else if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+			} else if (const UnaryExpr* unary = dynamic_cast<const UnaryExpr*>(expr)) {
 				find(unary->operand.get());
-			} else if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
-				for (const auto& argument : call->arguments) find(argument.get());
+			} else if (const CallExpr* call = dynamic_cast<const CallExpr*>(expr)) {
+				for (const ExprPtr& argument : call->arguments) find(argument.get());
 			}
 		};
 		find(loop->condition.get());
@@ -828,9 +831,9 @@ private:
 		edit.first = loop->line;
 		edit.last = loop->line;
 		std::string names;
-		for (const auto& [count, array] : hoisted) {
-			edit.lines.push_back({ indent + "var " + count + " := " + array + ".size()", loop->line });
-			names += (names.empty() ? "" : ", ") + array + ".size()";
+		for (const std::pair<std::string, std::string>& size : hoisted) {
+			edit.lines.push_back({ indent + "var " + size.first + " := " + size.second + ".size()", loop->line });
+			names += (names.empty() ? "" : ", ") + size.second + ".size()";
 		}
 		edit.lines.push_back({ indent + "while " + condition + ":" +
 			(parts[3].matched ? " " + parts[3].str() : std::string()), loop->line });

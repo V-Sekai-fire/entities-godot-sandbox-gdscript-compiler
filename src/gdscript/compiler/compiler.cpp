@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -190,7 +191,7 @@ std::optional<IRProgram> Compiler::compile_text(const std::string& source, const
 		auto tokens = lexer.tokenize();
 		// A rewritten text: every token -- and so every AST node, diagnostic and
 		// line-table entry -- takes the authored line it came from.
-		auto authored_line = [&](int line) {
+		const std::function<int(int)> authored_line = [&](int line) {
 			return line > 0 && size_t(line) < line_map.size() ? line_map[size_t(line)] : line;
 		};
 		std::vector<std::pair<int, std::string>> doc_comments = lexer.doc_comments();
@@ -198,7 +199,7 @@ std::optional<IRProgram> Compiler::compile_text(const std::string& source, const
 			for (Token& token : tokens) {
 				token.line = authored_line(token.line);
 			}
-			for (auto& comment : doc_comments) {
+			for (std::pair<int, std::string>& comment : doc_comments) {
 				comment.first = authored_line(comment.first);
 			}
 		}
