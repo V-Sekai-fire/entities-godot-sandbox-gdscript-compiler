@@ -5,8 +5,8 @@ The compiler sources in `src/` are extracted verbatim from
 
 | | |
 | --- | --- |
-| Commit | `ce6f6b843a81bd0e9737411227c79e04bf049c76` |
-| Synced | 2026-09-19 |
+| Commit | `b43ed1619abc12a669c59cb0aa25c4582873a7b9` |
+| Synced | 2026-10-01 |
 
 ## What is extracted
 
