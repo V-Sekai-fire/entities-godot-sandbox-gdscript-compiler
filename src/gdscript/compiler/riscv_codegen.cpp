@@ -853,6 +853,10 @@ void RISCVCodeGen::plan_numeric_loop_modes(const IRFunction& func) {
 			m_fn.used_int_resident_regs.end(), preg) == m_fn.used_int_resident_regs.end())
 			free_regs.push_back(preg);
 	}
+	// The loop scopes' dirty registers (plan_scalar_residency) come first.
+	for (size_t keep = loop_scope_dirty_demand(func, 2); keep > 0 && !free_regs.empty(); keep--) {
+		free_regs.erase(free_regs.begin());
+	}
 
 	// A cached operation writes the carried value's slot only, so its own
 	// destination must have exactly one definition and one reader: the MOVE.
@@ -1185,6 +1189,10 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 	});
 	static constexpr std::array<uint8_t, 11> INT_REGS {{ 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27 }};
 	static constexpr std::array<uint8_t, 12> FLOAT_REGS {{ 8, 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27 }};
+	// A loop scope that may allocate is released every pass: through the host,
+	// unless a dirty bit says nothing was made. Its register is worth more than
+	// one more resident, so keep it free for plan_scopes.
+	const size_t int_limit = INT_REGS.size() - loop_scope_dirty_demand(func, 2);
 	size_t next_int = 0;
 	size_t next_float = 0;
 	for (int root : groups) {
@@ -1211,7 +1219,7 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 			m_fn.used_float_resident_regs.push_back(preg);
 			for (int r : group_members[size_t(root)])
 				m_fn.resident_float_regs[size_t(r)] = int8_t(preg);
-		} else if (type != Variant::FLOAT && next_int < INT_REGS.size()) {
+		} else if (type != Variant::FLOAT && next_int < int_limit) {
 			const uint8_t preg = INT_REGS[next_int++];
 			m_fn.used_int_resident_regs.push_back(preg);
 			for (int r : group_members[size_t(root)])
@@ -4475,8 +4483,19 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_lw(REG_T0, REG_SP, get_variant_stack_offset(instruction_dst) +
 						VARIANT_TYPE_OFFSET);
 				}
-				emit_i_type(0x13, REG_T0, 3, tag, Variant::STRING); // sltiu
-				emit_xori(REG_T0, REG_T0, 1);
+				static const int64_t inline_tags = [] {
+					int64_t mask = 0;
+					for (int type = 0; type < 64; type++) {
+						if (type != Variant::OBJECT && !is_complex_variant_type(type)) {
+							mask |= int64_t(1) << type;
+						}
+					}
+					return mask;
+				}();
+				emit_li(REG_T1, inline_tags);
+				emit_srl(REG_T1, REG_T1, tag); // tags are below 64
+				emit_andi(REG_T1, REG_T1, 1);
+				emit_xori(REG_T0, REG_T1, 1);
 				for (uint8_t preg : dirty->second) emit_or(preg, preg, REG_T0);
 			}
 		}
@@ -7525,6 +7544,21 @@ static bool scoped_allocation_is_the_destination(const IRInstruction& instr) {
 
 static bool leaves_nothing_scoped(const IRInstruction& instr) {
 	switch (instr.opcode) {
+		// Built or read in guest memory: no host call, so nothing to scope. They
+		// count as clobbering (fa0, t0-t2), not as allocating.
+		case IROpcode::MAKE_VECTOR2:
+		case IROpcode::MAKE_VECTOR3:
+		case IROpcode::MAKE_VECTOR4:
+		case IROpcode::MAKE_VECTOR2I:
+		case IROpcode::MAKE_VECTOR3I:
+		case IROpcode::MAKE_VECTOR4I:
+		case IROpcode::MAKE_COLOR:
+		case IROpcode::MAKE_RECT2:
+		case IROpcode::MAKE_RECT2I:
+		case IROpcode::MAKE_PLANE:
+		case IROpcode::VGET_INLINE:
+		case IROpcode::VSET_INLINE:
+			return true;
 		case IROpcode::ARRAY_SET:
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::DICT_SET:
@@ -7650,6 +7684,24 @@ bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_i
 		}
 	}
 	return false;
+}
+
+size_t RISCVCodeGen::loop_scope_dirty_demand(const IRFunction& func, size_t cap) const {
+	std::unordered_map<int64_t, int> releases;
+	for (const IRInstruction& instr : func.instructions) {
+		if (instr.opcode == IROpcode::SCOPE_RELEASE) {
+			releases[instr.operands[0].immediate()]++;
+		}
+	}
+	size_t demand = 0;
+	for (size_t i = 0; i < func.instructions.size() && demand < cap; i++) {
+		const IRInstruction& instr = func.instructions[i];
+		if (instr.opcode == IROpcode::SCOPE_MARK && releases[instr.operands[0].immediate()] >= 2 &&
+			scope_body_may_allocate(func, i)) {
+			demand++;
+		}
+	}
+	return demand;
 }
 
 // Registers nothing will read again at each SCOPE_RELEASE.
