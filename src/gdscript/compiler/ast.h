@@ -483,6 +483,7 @@ struct StructField {
 
 struct StructDecl {
 	std::string name;
+	std::string source_path; // imported native script class, otherwise empty
 	std::vector<StructField> fields;
 	int line = 0;
 	int column = 0;
@@ -494,6 +495,7 @@ struct StructDecl {
 	std::vector<FunctionDecl> methods;
 	// `const` in a class body: compile-time only, like the file's own consts.
 	std::vector<StructField> constants;
+	std::vector<SignalDecl> signals;
 	size_t inherited_fields = 0;
 
 	const StructField* find_constant(const std::string& constant_name) const {

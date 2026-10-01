@@ -128,7 +128,9 @@ TEST_CASE("the compiler emits counted syscalls the ABI accepts") {
 	for (auto [number, op, inputs, outputs] : expected)
 		if (!found.count({ number, inputs, outputs }))
 			FAIL_CHECK("missing compiler lowering ", number, "/", inputs, "/", outputs);
-	for (unsigned number : { ECALL_UTILITY, ECALL_BREAKPOINT, ECALL_VSCOPE })
+	// THROW stays a full ECALL because a decoded custom instruction enters its
+	// handler without publishing PC, and an assertion reports its line from PC.
+	for (unsigned number : { ECALL_UTILITY, ECALL_BREAKPOINT, ECALL_VSCOPE, ECALL_THROW })
 		require(ecalls.count(number), "missing required full-state ECALL");
 	for (unsigned number : { ECALL_VCREATE, ECALL_ARRAY_AT })
 		require(!ecalls.count(number), "eligible syscall still lowered to ECALL");

@@ -2,6 +2,7 @@
 #include "../codegen.h"
 #include "../compiler.h"
 #include "../compiler_exception.h"
+#include "../ir_interpreter.h"
 #include "../ir_optimizer.h"
 #include "../lexer.h"
 #include "../parser.h"
@@ -395,7 +396,7 @@ TEST_CASE("what is refused") {
 			"class A:\n"
 			"\tsignal boom\n"
 			"func test():\n\treturn 1\n");
-	check(body.find("constant, field and function") != std::string::npos,
+	check(body.find("require native class support") != std::string::npos,
 		  "what a class body does not hold is refused: " + body);
 }
 
@@ -700,8 +701,8 @@ TEST_CASE("a class typed member holds null") {
 	const IRFunction *starts = find_function(ir, "starts_null");
 	check(starts != nullptr, "starts_null() is lowered");
 	if (starts != nullptr) {
-		check(count_opcode(*starts, IROpcode::TYPE_TEST) == 3,
-			  "every spelling tests the tag at run time");
+		check(count_opcode(*starts, IROpcode::CMP_EQ) == 3,
+			  "every spelling compares with null at run time");
 		check(count_opcode(*starts, IROpcode::LOAD_BOOL) == 0,
 			  "and none of them folds to a constant answer");
 	}
@@ -709,8 +710,8 @@ TEST_CASE("a class typed member holds null") {
 	const IRFunction *cleared = find_function(ir, "cleared");
 	check(cleared != nullptr, "cleared() is lowered");
 	if (cleared != nullptr) {
-		check(count_opcode(*cleared, IROpcode::TYPE_TEST) == 1,
-			  "a member assigned null answers the tag test");
+		check(count_opcode(*cleared, IROpcode::CMP_NEQ) == 1,
+			  "a member assigned null answers a runtime comparison");
 		check(count_opcode(*cleared, IROpcode::LOAD_BOOL) == 0,
 			  "assigning null does not prove the slot holds an instance");
 	}
@@ -1644,6 +1645,76 @@ TEST_CASE("what a chain refuses") {
 		  "a script class used as a value loads its Script resource");
 
 	std::cout << "  \u2713 Collisions and cycles are refused" << std::endl;
+}
+
+TEST_CASE("native class factories") {
+	const std::string source =
+			"class Row extends Control:\n"
+			"\tvar values: Array = []\n"
+			"\tfunc _init(value: int = 7):\n"
+			"\t\tvalues.append(value)\n"
+			"class Child extends Row:\n"
+			"\tvar extra := 9\n";
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+	CodeGenerator codegen;
+	codegen.set_native_classes(true);
+	IRProgram ir = codegen.generate(program);
+	for (const auto &name : { "@Row.@new", "@Child.@new" }) {
+		const IRFunction *factory = find_function(ir, name);
+		check(factory != nullptr, std::string(name) + " is emitted without a local construction site");
+		if (factory == nullptr) {
+			continue;
+		}
+		check(factory->parameters == std::vector<std::string>{ "value" },
+			  "factory has constructor parameters without synthetic self");
+		check(count_opcode(*factory, IROpcode::MAKE_DICTIONARY) >= 1,
+			  "factory initializes instance fields");
+		const size_t index = size_t(factory - ir.functions.data());
+		const auto &signature = ir.signatures[index];
+		check(signature.name == name && signature.is_static && signature.return_type == Variant::OBJECT,
+			  "factory publishes a static object-returning signature");
+		check(signature.required_arguments == 0 && signature.parameters.size() == 1 && signature.parameters[0].type == Variant::INT && signature.parameters[0].default_kind == FunctionParameter::DefaultKind::INT && std::get<int64_t>(signature.parameters[0].default_value) == 7,
+			  "factory preserves inherited constructor defaults and types");
+	}
+	const IRProgram sandbox = compile_to_ir(source);
+	check(find_function(sandbox, "@Row.@new") == nullptr,
+		  "native factories do not change sandbox code generation");
+}
+
+TEST_CASE("null object comparisons use variant equality") {
+	const IRProgram ir = compile_to_ir(
+			"func untyped(value):\n\treturn value == null\n"
+			"func typed(value: Node):\n\treturn value != null\n"
+			"func reversed(value: Node):\n\treturn null == value\n"
+			"func scalar(value: int):\n\treturn value == null\n");
+	for (const auto &name : { "untyped", "typed", "reversed" }) {
+		const IRFunction *fn = find_function(ir, name);
+		check(fn != nullptr, std::string(name) + " comparison function exists");
+		if (fn == nullptr) {
+			continue;
+		}
+		check(count_opcode(*fn, IROpcode::CMP_EQ) + count_opcode(*fn, IROpcode::CMP_NEQ) == 1,
+			  "possible Object null uses Variant equality");
+		check(count_opcode(*fn, IROpcode::TYPE_TEST) == 0,
+			  "possible Object null is not tested by its tag");
+	}
+	const IRFunction *scalar = find_function(ir, "scalar");
+	check(scalar != nullptr && count_opcode(*scalar, IROpcode::CMP_EQ) == 0,
+		  "proven non-object null comparison still folds");
+
+	// A class annotation admits null in the Sandbox too, where an instance is a
+	// Dictionary. The type tag does not tell whether a parameter holds one.
+	const std::string nullable_class =
+			"class Row:\n\tvar value: int = 7\n"
+			"func null_class(value: Row):\n"
+			"\treturn value == null and null == value and not (value != null)\n";
+	const IRProgram classes = compile_to_ir(nullable_class);
+	IRInterpreter interpreter(classes);
+	const IRInterpreter::Value answer = interpreter.call("null_class", { std::monostate{} });
+	check(std::holds_alternative<bool>(answer) && std::get<bool>(answer),
+		  "a null class-typed parameter equals null");
 }
 
 } // namespace

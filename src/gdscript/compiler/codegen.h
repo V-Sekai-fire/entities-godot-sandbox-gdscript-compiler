@@ -415,7 +415,7 @@ private:
 		const NamedArguments& names, FunctionContext& func, const Expr* site);
 	int gen_class_method_call(const StructDecl& decl, const FunctionDecl& method,
 		const StructDecl& owner, int self_reg, const std::vector<ExprPtr>& arguments,
-		const NamedArguments& names, FunctionContext& func, const Expr* site);
+		const NamedArguments& names, FunctionContext& func, const Expr* site, bool direct = false);
 	int class_field_self(const std::string& name, FunctionContext& func);
 	bool is_super(const Expr* expr, FunctionContext& func);
 	int gen_super_call(const MemberCallExpr* expr, FunctionContext& func);
@@ -536,6 +536,7 @@ private:
 	std::unordered_map<std::string, IRGlobalVar> m_global_const_values;
 	// 'Class.NAME' -> its folded value; a class constant never reaches the IR.
 	std::unordered_map<std::string, IRGlobalVar> m_class_constants;
+	std::unordered_map<std::string, size_t> m_class_preloads;
 	// Forward references read NIL; rejected at this boundary.
 	size_t m_globals_lowered = 0;
 	bool m_members_in_scope = true;
@@ -545,6 +546,10 @@ private:
 
 	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out,
 		const FunctionContext* func = nullptr, const StructDecl* owner = nullptr) const;
+	// True when a call that passes only `supplied` arguments must go through
+	// the callee's arity wrapper. That happens when an omitted default is not
+	// a constant, since only the callee's scope can resolve its names.
+	bool omits_evaluated_default(const std::vector<Parameter>& params, size_t supplied) const;
 
 	// Decline reason; match ignores it, switch promotes it to a compile error.
 	struct JumpTableReject {
@@ -592,7 +597,7 @@ private:
 	// Returns -1 for non-const or container globals (those stay on LOAD_GLOBAL).
 	int gen_const_global_value(const std::string& name, FunctionContext& func);
 	int gen_folded_const(const IRGlobalVar& global, FunctionContext& func);
-	void register_class_constants(const Program& program);
+	void register_class_constants(const Program& program, IRProgram& ir, FunctionContext& init);
 	int gen_class_constant(const StructDecl& decl, const std::string& name,
 		FunctionContext& func);
 

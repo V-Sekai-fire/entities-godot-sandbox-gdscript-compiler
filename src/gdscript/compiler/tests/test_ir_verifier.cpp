@@ -213,6 +213,27 @@ TEST_CASE("undefined register") {
 	std::cout << "  Definedness OK" << std::endl;
 }
 
+TEST_CASE("backward join definedness") {
+	IRFunction func;
+	func.name = "backward_join";
+	func.parameters = { "condition" };
+	func.max_registers = 3;
+	const auto late = IRValue::label(test_strings.intern("late_predecessor"));
+	const auto join = IRValue::label(test_strings.intern("earlier_join"));
+	func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(0), late);
+	func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(2), IRValue::imm(1));
+	func.instructions.emplace_back(IROpcode::JUMP, join);
+	func.instructions.emplace_back(IROpcode::LABEL, join);
+	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(1), IRValue::reg(2));
+	func.instructions.emplace_back(IROpcode::RETURN);
+	func.instructions.emplace_back(IROpcode::LABEL, late);
+	func.instructions.emplace_back(IROpcode::JUMP, join);
+	expect_rejected(func, "r2 is read but is not defined on every path");
+	func.instructions.insert(func.instructions.end() - 1,
+							 IRInstruction(IROpcode::LOAD_IMM, IRValue::reg(2), IRValue::imm(2)));
+	ir_verify(func, "a test", &test_strings);
+}
+
 TEST_CASE("labels") {
 	// A branch to a label that does not exist -- what a pass leaves behind when
 	// it deletes a label it thought was unreachable.

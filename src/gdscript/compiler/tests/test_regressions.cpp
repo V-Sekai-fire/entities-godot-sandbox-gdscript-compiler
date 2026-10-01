@@ -883,3 +883,146 @@ TEST_CASE("vector int float conversion") {
 
 	std::cout << "  \u2713 Vector and rect int/float conversion" << std::endl;
 }
+
+static void assert_labels_defined(const IRFunction &func) {
+	std::vector<uint32_t> defined;
+	for (const auto &instr : func.instructions) {
+		if (instr.opcode == IROpcode::LABEL) {
+			defined.push_back(instr.operands[0].string_id);
+		}
+	}
+	for (const auto &instr : func.instructions) {
+		if (instr.opcode == IROpcode::LABEL) {
+			continue;
+		}
+		for (const auto &operand : instr.operands) {
+			if (operand.type == IRValue::Type::LABEL) {
+				REQUIRE(std::find(defined.begin(), defined.end(), operand.string_id) != defined.end());
+			}
+		}
+	}
+}
+
+TEST_CASE("break after a nested batched loop") {
+	const std::string source = R"(
+func over_arrays(items: Array) -> int:
+	var n: int = 0
+	for a in items:
+		if a == 1:
+			for b in items:
+				n += 1
+			if n != 0:
+				break
+	return n
+
+func over_strings(text: String) -> int:
+	var n: int = 0
+	for a in text:
+		for b in text:
+			n += 1
+		if n > 2:
+			break
+	return n
+
+func continue_after(items: Array) -> int:
+	var n: int = 0
+	for a in items:
+		for b in items:
+			n += 1
+		if n > 100:
+			continue
+		n += 1
+	return n
+)";
+
+	for (bool optimize : { false, true }) {
+		IRProgram ir = compile_to_ir(source, optimize);
+		assert_labels_defined(find_function(ir, "over_arrays"));
+		assert_labels_defined(find_function(ir, "over_strings"));
+		assert_labels_defined(find_function(ir, "continue_after"));
+	}
+}
+
+TEST_CASE("class typed local that starts null") {
+	const std::string source = R"(
+func test(value):
+	var n: Node3D = null
+	n = value
+	var five: int = 5
+	return n == five
+
+func without_initializer(value):
+	var n: Node3D
+	n = value
+	var five: int = 5
+	return n != five
+
+func still_null():
+	var n: Node3D = null
+	return n == null
+)";
+	REQUIRE(run_int(source, "test", { int64_t(5) }) == 1);
+	REQUIRE(run_int(source, "test", { int64_t(4) }) == 0);
+	REQUIRE(run_int(source, "without_initializer", { int64_t(5) }) == 0);
+	REQUIRE(run_int(source, "still_null") == 1);
+
+	REQUIRE(!rejects("func test(o: Node3D):\n\tvar n: Node3D = null\n\tn = o\n\treturn n\n"));
+	REQUIRE(!rejects("func test():\n\tvar n: Node3D = null\n\tn = self\n\treturn n\n"));
+}
+
+// A default is an expression in the callee's scope. It used to be evaluated at
+// the call site in the caller's scope. A default naming an earlier parameter
+// then failed to compile or silently read a caller's local of the same name.
+TEST_CASE("defaults are evaluated in the callee's scope") {
+	const std::string source = R"(
+func f(a := 1, b := a + 10):
+	return a * 100 + b
+
+func shadowed():
+	var a = 5
+	return f()
+
+func supplied():
+	var a = 5
+	return f(2) * 1000 + f(3, 4)
+
+class Box:
+	static func scaled(a := 3, b := a * 2):
+		return a + b
+	static func call_it():
+		return scaled() * 100 + scaled(1)
+)";
+	REQUIRE(run_int(source, "shadowed") == 111);
+	REQUIRE(run_int(source, "supplied") == 212 * 1000 + 304);
+	REQUIRE(run_int(source, "@Box.call_it") == 9 * 100 + 3);
+
+	// Constant defaults still fold at the call site without a wrapper or an extra call.
+	const IRProgram ir = compile_to_ir(
+			"func g(a := 1, b := 2):\n\treturn a + b\n"
+			"func caller():\n\treturn g()\n");
+	for (const auto &func : ir.functions) {
+		REQUIRE(func.name.rfind("@defaults", 0) != 0);
+	}
+
+	// A method's default may read the receiver's fields.
+	const IRProgram members = compile_to_ir(R"(
+class Box:
+	var base := 7
+	func get_v(extra := base):
+		return extra
+func test():
+	var base = 1
+	return Box.new().get_v()
+)");
+	const IRFunction &wrapper = find_function(members, "@defaults1.Box.get_v");
+	REQUIRE((wrapper.parameters.size() == 1 && wrapper.parameters[0] == "self"));
+	bool calls_wrapper = false;
+	for (const auto &instr : find_function(members, "test").instructions) {
+		if (instr.opcode == IROpcode::CALL &&
+			members.strings[instr.operands[0].string_id] == "@defaults1.Box.get_v") {
+			calls_wrapper = true;
+		}
+	}
+	REQUIRE(calls_wrapper);
+	std::cout << "  \u2713 Defaults are evaluated in the callee's scope" << std::endl;
+}
