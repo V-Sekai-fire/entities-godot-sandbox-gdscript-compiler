@@ -14,7 +14,7 @@ using namespace gdscript;
 
 namespace {
 
-RewriteResult rewrite(const std::string& source, bool fast_arrays = true) {
+RewriteResult rewrite(const std::string &source, bool fast_arrays = true) {
 	Lexer lexer(source);
 	Parser parser(lexer.tokenize());
 	const Program program = parser.parse();
@@ -23,7 +23,7 @@ RewriteResult rewrite(const std::string& source, bool fast_arrays = true) {
 	return rewrite_packed_loops(source, program, options);
 }
 
-bool contains(const std::string& text, const std::string& part) {
+bool contains(const std::string &text, const std::string &part) {
 	return text.find(part) != std::string::npos;
 }
 
@@ -31,11 +31,11 @@ bool contains(const std::string& text, const std::string& part) {
 
 TEST_CASE("a typed walk becomes an index walk") {
 	const RewriteResult result = rewrite(
-		"func f(v: PackedFloat32Array) -> float:\n"
-		"\tvar t := 0.0\n"
-		"\tfor x in v:\n"
-		"\t\tt += x\n"
-		"\treturn t\n");
+			"func f(v: PackedFloat32Array) -> float:\n"
+			"\tvar t := 0.0\n"
+			"\tfor x in v:\n"
+			"\t\tt += x\n"
+			"\treturn t\n");
 	REQUIRE(result.applied == 1);
 	CHECK(contains(result.source, "\tfor _sgd_i0 in v.size():\n\t\tvar x: float = v[_sgd_i0]\n\t\tt += x\n"));
 	CHECK_FALSE(contains(result.source, "for x in v"));
@@ -43,56 +43,58 @@ TEST_CASE("a typed walk becomes an index walk") {
 
 TEST_CASE("without fast arrays a read-only walk reads an Array copy") {
 	const RewriteResult result = rewrite(
-		"func f(v: PackedInt32Array) -> int:\n"
-		"\tvar t := 0\n"
-		"\tfor x in v:\n"
-		"\t\tt += x\n"
-		"\treturn t\n", false);
+			"func f(v: PackedInt32Array) -> int:\n"
+			"\tvar t := 0\n"
+			"\tfor x in v:\n"
+			"\t\tt += x\n"
+			"\treturn t\n",
+			false);
 	REQUIRE(result.applied == 1);
 	CHECK(contains(result.source, "for _sgd_e0 in Array(v):\n\t\tvar x: int = _sgd_e0\n"));
 	// One that writes the array keeps reading the array itself.
 	const RewriteResult written = rewrite(
-		"func f(v: PackedInt32Array) -> int:\n"
-		"\tvar i := 0\n"
-		"\tfor x in v:\n"
-		"\t\tv[i] = x * 2\n"
-		"\t\ti += 1\n"
-		"\treturn i\n", false);
+			"func f(v: PackedInt32Array) -> int:\n"
+			"\tvar i := 0\n"
+			"\tfor x in v:\n"
+			"\t\tv[i] = x * 2\n"
+			"\t\ti += 1\n"
+			"\treturn i\n",
+			false);
 	REQUIRE(written.applied == 1);
 	CHECK(contains(written.source, "for _sgd_i0 in v.size():"));
 }
 
 TEST_CASE("an untyped walk is guarded, with the authored loop as the fallback") {
 	const RewriteResult result = rewrite(
-		"func f(values) -> float:\n"
-		"\tvar t := 0.0\n"
-		"\tfor x in values:\n"
-		"\t\tt += float(x)\n"
-		"\treturn t\n");
+			"func f(values) -> float:\n"
+			"\tvar t := 0.0\n"
+			"\tfor x in values:\n"
+			"\t\tt += float(x)\n"
+			"\treturn t\n");
 	REQUIRE(result.applied == 1);
 	CHECK(contains(result.source,
-		"\tif typeof(values) >= TYPE_PACKED_BYTE_ARRAY and typeof(values) <= TYPE_PACKED_VECTOR4_ARRAY:\n"
-		"\t\tfor _sgd_i0 in values.size():\n"
-		"\t\t\tvar x = values[_sgd_i0]\n"
-		"\t\t\tt += float(x)\n"
-		"\telse:\n"
-		"\t\tfor x in values:\n"
-		"\t\t\tt += float(x)\n"));
+				   "\tif typeof(values) >= TYPE_PACKED_BYTE_ARRAY and typeof(values) <= TYPE_PACKED_VECTOR4_ARRAY:\n"
+				   "\t\tfor _sgd_i0 in values.size():\n"
+				   "\t\t\tvar x = values[_sgd_i0]\n"
+				   "\t\t\tt += float(x)\n"
+				   "\telse:\n"
+				   "\t\tfor x in values:\n"
+				   "\t\t\tt += float(x)\n"));
 }
 
 TEST_CASE("a while over size() reads it once") {
 	const RewriteResult result = rewrite(
-		"func f(v: PackedInt64Array) -> int:\n"
-		"\tvar i := 0\n"
-		"\twhile i < v.size() and v[i] < 10:\n"
-		"\t\ti += 1\n"
-		"\treturn i\n");
+			"func f(v: PackedInt64Array) -> int:\n"
+			"\tvar i := 0\n"
+			"\twhile i < v.size() and v[i] < 10:\n"
+			"\t\ti += 1\n"
+			"\treturn i\n");
 	REQUIRE(result.applied == 1);
 	CHECK(contains(result.source, "\tvar _sgd_n0 := v.size()\n\twhile i < _sgd_n0 and v[i] < 10:\n"));
 }
 
 TEST_CASE("loops that could change the array's size keep their text") {
-	const char* const unchanged[] = {
+	const char *const unchanged[] = {
 		// The body resizes it.
 		"func f(v: PackedInt32Array) -> int:\n"
 		"\tvar i := 0\n"
@@ -129,7 +131,7 @@ TEST_CASE("loops that could change the array's size keep their text") {
 		"\t\tt += i\n"
 		"\treturn t\n",
 	};
-	for (const char* source : unchanged) {
+	for (const char *source : unchanged) {
 		CAPTURE(source);
 		const RewriteResult result = rewrite(source);
 		CHECK(result.applied == 0);
@@ -139,14 +141,14 @@ TEST_CASE("loops that could change the array's size keep their text") {
 
 TEST_CASE("the rewritten text keeps the authored line numbers") {
 	const std::string source =
-		"func f(v: PackedFloat32Array) -> float:\n" // 1
-		"\tvar t := 0.0\n"                          // 2
-		"\tfor x in v:\n"                           // 3
-		"\t\tt += x\n"                              // 4
-		"\treturn t\n"                              // 5
-		"\n"                                        // 6
-		"func g() -> int:\n"                        // 7
-		"\treturn 1 + undefined_name\n";            // 8
+			"func f(v: PackedFloat32Array) -> float:\n" // 1
+			"\tvar t := 0.0\n" // 2
+			"\tfor x in v:\n" // 3
+			"\t\tt += x\n" // 4
+			"\treturn t\n" // 5
+			"\n" // 6
+			"func g() -> int:\n" // 7
+			"\treturn 1 + undefined_name\n"; // 8
 	const RewriteResult result = rewrite(source);
 	REQUIRE(result.applied == 1);
 	REQUIRE(result.line_map.size() == 10); // [0] and nine rewritten lines
@@ -165,11 +167,11 @@ TEST_CASE("the rewritten text keeps the authored line numbers") {
 
 TEST_CASE("the compiler compiles the rewritten text and says so") {
 	const std::string source =
-		"func f(v: PackedFloat32Array) -> float:\n"
-		"\tvar t := 0.0\n"
-		"\tfor x in v:\n"
-		"\t\tt += x\n"
-		"\treturn t\n";
+			"func f(v: PackedFloat32Array) -> float:\n"
+			"\tvar t := 0.0\n"
+			"\tfor x in v:\n"
+			"\t\tt += x\n"
+			"\treturn t\n";
 	Compiler compiler;
 	CompilerOptions options;
 	options.rewrite = true;
