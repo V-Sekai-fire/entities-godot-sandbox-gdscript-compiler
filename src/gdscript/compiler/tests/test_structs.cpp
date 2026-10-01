@@ -613,12 +613,12 @@ TEST_CASE("compound assignment to a field") {
 	REQUIRE(count_dict_gets(test) == 2);
 	REQUIRE(count_opcode(test, IROpcode::ADD) == 1);
 
-	// The rewrite needs a second copy of the target, so it is offered only for
-	// the targets that can be rebuilt without evaluating anything twice.
-	REQUIRE(rejects(BANK_ACCOUNT +
-					"func open() -> BankAccount:\n\treturn BankAccount.new()\n"
-					"\n"
-					"func test():\n\topen().balance += 5\n\treturn 1\n"));
+	// A target that evaluates a call goes through a temporary: open() runs once.
+	const IRProgram opened = compile_to_ir(BANK_ACCOUNT +
+										   "func open() -> BankAccount:\n\treturn BankAccount.new()\n"
+										   "\n"
+										   "func test():\n\topen().balance += 5\n\treturn 1\n");
+	REQUIRE(count_opcode(find_function(opened, "test"), IROpcode::CALL) == 1);
 	// An unknown field is still rejected through this path.
 	REQUIRE(rejects(BANK_ACCOUNT +
 					"func test():\n\tvar a = BankAccount.new()\n\ta.blance += 5\n\treturn a\n"));
@@ -807,6 +807,7 @@ TEST_CASE("struct signatures") {
 
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = false;
 	compiler.compile(
 			"struct Point:\n\tvar x: int = 0\n\n"
@@ -1045,6 +1046,7 @@ TEST_CASE("struct check levels") {
 	auto compiled = [&](bool restricted) {
 		Compiler compiler;
 		CompilerOptions options;
+		options.extensions = true;
 		options.restricted = restricted;
 		options.struct_checks = CompilerOptions::StructChecks::OFF;
 		const std::vector<uint8_t> elf = compiler.compile(source, options);

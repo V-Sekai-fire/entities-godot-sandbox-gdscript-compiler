@@ -14,6 +14,7 @@ namespace gdscript {
 class Parser {
 public:
 	explicit Parser(std::vector<Token> tokens);
+	void set_extensions(bool enabled) { m_extensions = enabled; }
 
 	// Optional; without doc comments every description is empty.
 	void set_doc_comments(std::vector<std::pair<int, std::string>> comments);
@@ -115,6 +116,7 @@ private:
 	static ExprPtr make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right);
 	// Null when the target cannot be read twice without side effects.
 	static ExprPtr clone_lvalue(const Expr* expr);
+	StmtPtr hoist_compound_target(ExprPtr target, BinaryExpr::Op op, ExprPtr rhs);
 
 	bool match(TokenType type);
 	bool match_one_of(std::initializer_list<TokenType> types);
@@ -156,8 +158,14 @@ private:
 	DiagnosticSink* m_diagnostics = nullptr;
 	std::vector<ParseDiagnostic> m_warnings;
 	std::vector<Token> m_tokens;
+	std::vector<StructDecl> m_nested_classes;
+	bool m_extensions = true;
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;
+	int m_compound_temps = 0;
+	// A finished `x as T` that the operators after it take as their left operand.
+	ExprPtr m_pending_primary;
+	bool continues_after_cast() const;
 	// Tracks `await` in the current function body.
 	bool m_saw_await = false;
 	int m_inline_suite_depth = 0;

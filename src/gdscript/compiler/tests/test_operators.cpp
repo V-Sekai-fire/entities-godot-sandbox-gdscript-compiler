@@ -628,15 +628,18 @@ TEST_CASE("compound assignment through node path sugar") {
 	REQUIRE(count_opcode(find_function(ir, "f"), IROpcode::ADD) == 1);
 }
 
-// A target that evaluates a call would be evaluated twice, giving `a[f()] += 1`
-// two different elements, so it is rejected.
-TEST_CASE("compound assignment refuses an impure target") {
-	REQUIRE(rejects(
+// A target that evaluates a call is read and written through temporaries, so
+// `a[g()] += 1` calls g once and touches one element.
+TEST_CASE("compound assignment evaluates an impure target once") {
+	const IRProgram ir = compile_to_ir(
 			"func g() -> int:\n"
 			"\treturn 0\n"
 			"func f(a: Array):\n"
 			"\ta[g()] += 1\n"
-			"\treturn a\n"));
+			"\treturn a\n",
+			false);
+	REQUIRE(count_opcode(find_function(ir, "f"), IROpcode::CALL) == 1);
+	REQUIRE(count_opcode(find_function(ir, "f"), IROpcode::ADD) == 1);
 }
 
 // -= Enums =-

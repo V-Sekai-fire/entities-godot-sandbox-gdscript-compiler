@@ -47,6 +47,8 @@ struct CompilerOptions {
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
 	bool restricted = false;
+	// Opt-in SafeGDScript extensions: struct, trait, uses, switch, `?` types and operators, unions, @test.
+	bool extensions = false;
 	// `@test` functions are compiled in and published. A shipping build turns
 	// this off: the tests leave the ELF entirely.
 	bool emit_tests = true;

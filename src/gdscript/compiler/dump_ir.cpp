@@ -91,6 +91,7 @@ int main(int argc, char** argv)
 	bool no_optimize = false;
 	bool show_codegen = false;
 	bool check_only = false;
+	bool extensions = false;
 	bool double_precision = native_variant_layout().double_precision;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -107,6 +108,8 @@ int main(int argc, char** argv)
 			show_codegen = true;
 		} else if (arg == "--check") {
 			check_only = true;
+		} else if (arg == "--extensions") {
+			extensions = true;
 		} else if (arg == "--help" || arg == "-h") {
 			print_usage(argv[0]);
 			return 0;
@@ -169,6 +172,7 @@ int main(int argc, char** argv)
 	if (check_only) {
 		CompilerOptions options;
 		options.optimize = !no_optimize;
+		options.extensions = extensions;
 		options.double_precision = double_precision;
 		options.autoloads = autoloads;
 		options.global_script_classes = global_classes;
@@ -177,6 +181,7 @@ int main(int argc, char** argv)
 
 	try {
 		Lexer lexer(source);
+		lexer.set_extensions(extensions);
 		auto tokens = lexer.tokenize();
 
 		if (verbose) {
@@ -188,6 +193,7 @@ int main(int argc, char** argv)
 		}
 
 		Parser parser(tokens);
+		parser.set_extensions(extensions);
 		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
 		for (const auto& spec : trait_specs) {
@@ -199,7 +205,9 @@ int main(int argc, char** argv)
 			const std::string trait_source((std::istreambuf_iterator<char>(in)),
 				std::istreambuf_iterator<char>());
 			Lexer trait_lexer(trait_source);
+			trait_lexer.set_extensions(extensions);
 			Parser trait_parser(trait_lexer.tokenize());
+			trait_parser.set_extensions(extensions);
 			trait_parser.set_doc_comments(trait_lexer.doc_comments());
 			Program host = trait_parser.parse();
 			for (TraitDecl& trait : host.traits) {
@@ -222,7 +230,9 @@ int main(int argc, char** argv)
 				const std::string base_source((std::istreambuf_iterator<char>(in)),
 					std::istreambuf_iterator<char>());
 				Lexer base_lexer(base_source);
+				base_lexer.set_extensions(extensions);
 				Parser base_parser(base_lexer.tokenize());
+				base_parser.set_extensions(extensions);
 				base_parser.set_doc_comments(base_lexer.doc_comments());
 				ChainLink link;
 				link.name = base_specs[i].first;
@@ -257,6 +267,7 @@ int main(int argc, char** argv)
 		if (!program.chain.merged()) apply_traits(program);
 
 		CodeGenerator codegen;
+		codegen.set_extensions(extensions);
 		codegen.set_autoloads(autoloads);
 		codegen.set_global_script_classes(global_classes);
 		IRProgram ir = codegen.generate(program);

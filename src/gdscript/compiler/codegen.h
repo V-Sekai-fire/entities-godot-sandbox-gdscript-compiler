@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "ast.h"
 #include "builtin_members.h"
 #include "builtin_methods.h"
@@ -41,9 +42,12 @@ public:
 	}
 
 	void set_native_classes(bool enabled) { m_native_classes = enabled; }
+	// Off: plain GDScript, where an untyped `var x = v` is a Variant that may change type.
+	void set_extensions(bool enabled) { m_extensions = enabled; }
 
 private:
 	bool m_native_classes = false;
+	bool m_extensions = true;
 	// Per-function state. Value type: lives on the stack for one function's
 	// lowering, so new fields are automatically fresh. Program-wide state
 	// (string constants, globals, label counter) stays on CodeGenerator.
@@ -200,6 +204,10 @@ private:
 	int gen_range(const CallExpr* expr, FunctionContext& func);
 	int gen_color8(const CallExpr* expr, FunctionContext& func);
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
+	int gen_sealed_class_tag(int value_reg, FunctionContext& func);
+	int gen_class_dispatch(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
+	int gen_class_dispatch(const std::string& method_name, const std::vector<ExprPtr>& arguments, int obj_reg,
+		FunctionContext& func, const std::function<int(const std::vector<int>&)>& fallback);
 	int gen_instance_class_test(int value_reg, const std::string& class_name, int result_reg,
 		FunctionContext& func);
 	int gen_cast(const CastExpr* expr, FunctionContext& func);
@@ -634,6 +642,21 @@ private:
 	std::vector<const TraitDecl*> m_global_array_element_traits;
 	std::vector<const TraitDecl*> m_global_dictionary_value_traits;
 	std::vector<bool> m_global_holds_object;
+	// Index of the hidden `@seal` global, or -1 when the program declares no class.
+	int m_seal_global = -1;
+	// Whether any code reads the seal; only then does global init create it.
+	bool m_seal_used = false;
+	void prepend_global_object(IRProgram& ir_program, int global_index, const char* class_name);
+	// Class name -> hidden global holding the object that class evaluates to as a value.
+	std::unordered_map<std::string, int> m_class_value_globals;
+	// The class value globals some code reads; only those are created at startup.
+	std::unordered_set<int> m_class_values_used;
+	// Class constants that do not fold (a call, a container literal), keyed 'Class.NAME'; evaluated at each read.
+	std::unordered_map<std::string, std::pair<const StructDecl*, const StructField*>> m_call_class_constants;
+	int gen_class_value_new(const MemberCallExpr* expr, int obj_reg, FunctionContext& func);
+	std::vector<std::pair<std::string, size_t>> m_pending_constructors;
+	static std::string class_value_constructor_name(const std::string& class_name, size_t arity);
+	IRFunction generate_class_value_constructor(const StructDecl& decl, size_t arity);
 
 	bool type_hint_names_a_class(const std::string& type_hint) const;
 	void mark_global_holds_object(int64_t global_idx);

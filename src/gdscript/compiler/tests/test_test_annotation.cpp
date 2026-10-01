@@ -215,6 +215,7 @@ TEST_CASE("an overridden base test is not a test") {
 	// A displaced base implementation lands on a mangled symbol; only the
 	// method visible on the final script is a test of it. Same rule @rpc uses.
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = false;
 	options.base_sources.push_back(CompilerOptions::BaseSource{
 			"Base", "res://base.sgd",
@@ -238,6 +239,7 @@ TEST_CASE("an overridden base test is not a test") {
 
 TEST_CASE("an inherited base test is a test") {
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = false;
 	options.base_sources.push_back(CompilerOptions::BaseSource{
 			"Base", "res://base.sgd",
@@ -266,6 +268,7 @@ static const std::string TEST_PROGRAM =
 
 TEST_CASE("a shipping build drops the tests") {
 	CompilerOptions options;
+	options.extensions = true;
 	options.emit_tests = false;
 	Compiler compiler;
 	const std::vector<uint8_t> elf = compiler.compile(TEST_PROGRAM, options);
@@ -283,6 +286,7 @@ TEST_CASE("a shipping build drops the tests") {
 
 static std::string build_error(const std::string &source, bool emit_tests) {
 	CompilerOptions options;
+	options.extensions = true;
 	options.emit_tests = emit_tests;
 	Compiler compiler;
 	const std::vector<uint8_t> elf = compiler.compile(source, options);
@@ -320,7 +324,9 @@ TEST_CASE("dropping the tests leaves the rest unchanged") {
 	// Tests call helpers, never the reverse, so removing them is not supposed
 	// to move a single instruction of the code that ships.
 	CompilerOptions with_tests;
+	with_tests.extensions = true;
 	CompilerOptions without_tests;
+	without_tests.extensions = true;
 	without_tests.emit_tests = false;
 
 	Compiler a;
@@ -347,7 +353,7 @@ TEST_CASE("dropping the tests leaves the rest unchanged") {
 
 TEST_CASE("the source model flags a test") {
 	const SourceModel model = analyze_source(TEST_PROGRAM, "res://sample.sgd",
-											 ANALYZE_DECLARATIONS);
+											 ANALYZE_DECLARATIONS | ANALYZE_EXTENSIONS);
 
 	bool found = false;
 	for (const SourceDeclaration &declaration : model.declarations) {

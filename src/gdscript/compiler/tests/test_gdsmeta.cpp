@@ -148,6 +148,7 @@ TEST_CASE("compiled elf carries metadata") {
 
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.output_elf = true;
 	const std::vector<uint8_t> elf = compiler.compile(source, options);
 	REQUIRE((!elf.empty() && "compile failed"));
@@ -197,6 +198,7 @@ TEST_CASE("compiled elf carries metadata") {
 TEST_CASE("typed contract") {
 	Compiler compiler;
 	CompilerOptions options;
+	options.extensions = true;
 	options.base_sources.push_back({ "API", "api.sgd", "trait_name API\n@abstract func time() -> float\n", true });
 	options.base_sources.push_back({ "Brain", "brain.sgd", "trait_name Brain\n@abstract func mod_init(api: API) -> void\n@abstract func think(delta: float) -> Vector2\n", true });
 	const std::string source = "uses Brain\nconst COUNT = 42\nenum State { IDLE, RUN }\nfunc mod_init(api: API) -> void: pass\nfunc think(delta: float) -> Vector2: return Vector2.ZERO\n";

@@ -139,7 +139,9 @@ Failure check(const std::string &source) {
 				build_ir(source, n);
 			}
 			Compiler compiler;
-			if (compiler.compile(source).empty()) {
+			CompilerOptions options;
+			options.extensions = true;
+			if (compiler.compile(source, options).empty()) {
 				return { "struct ELF generation failed", compiler.get_error_info().message };
 			}
 			return {};

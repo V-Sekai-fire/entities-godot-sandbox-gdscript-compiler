@@ -7,6 +7,7 @@ using namespace gdscript;
 
 static CompilerOptions options() {
 	CompilerOptions result;
+	result.extensions = true;
 	result.engine_ancestry = { { "Node", "Object" }, { "Node2D", "CanvasItem,Node,Object" }, { "Node3D", "Node,Object" } };
 	return result;
 }
