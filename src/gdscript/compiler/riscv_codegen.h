@@ -183,6 +183,10 @@ private:
 	// Bytes of one element of a Packed*Array of `type` as the host stores it: the
 	// vectors follow real_t, Color is always four floats. 0 for an unsupported type.
 	int packed_element_bytes(int64_t type) const;
+	// One float at address+offset widened into `dst`, or `value` narrowed into one,
+	// as the host converts them. Clobber t0 and t2 (and f1, to narrow).
+	void emit_packed_float_widen(uint8_t dst, uint8_t address, int offset);
+	void emit_packed_float_narrow(uint8_t value, uint8_t address, int offset);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_dict_const(const IRInstruction& instr);
 	void gen_struct_check(const IRInstruction& instr);
