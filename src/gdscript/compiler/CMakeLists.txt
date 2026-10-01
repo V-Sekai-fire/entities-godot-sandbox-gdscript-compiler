@@ -14,6 +14,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # No-op if a parent project (the sandbox API, godot-cpp) already declared it.
 option(DOUBLE_PRECISION "Enable double precision real_t" OFF)
 
+# Packed array regions (CompilerOptions::fast_arrays) are on by default. OFF
+# builds every tool and test with the per-element default instead, so the whole
+# suite can be run against both lowerings.
+option(GDSCRIPT_FAST_ARRAYS "Packed array regions on by default" ON)
+if (NOT GDSCRIPT_FAST_ARRAYS)
+	add_compile_definitions(GDSCRIPT_FAST_ARRAYS_DEFAULT=0)
+endif()
+# The same for the GDScript rewrite of loops over packed arrays (rewrite.h).
+option(GDSCRIPT_REWRITE "Packed array loop rewrite on by default" ON)
+if (NOT GDSCRIPT_REWRITE)
+	add_compile_definitions(GDSCRIPT_REWRITE_DEFAULT=0)
+endif()
+
 # Compiler sources
 set(FRONTEND_SOURCES
     compiler_exception.cpp
@@ -33,6 +46,7 @@ set(FRONTEND_SOURCES
     ir_optimizer.cpp
     ir_verifier.cpp
     codegen.cpp
+    rewrite.cpp
     compiler.cpp
     c_codegen.cpp
     ir_interpreter.cpp
@@ -213,6 +227,8 @@ if (BUILD_TESTING)
 	target_compile_definitions(test_variant_api PRIVATE
 		GDSC_VARIANT_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/tests/variant_api_unsupported.txt")
 	add_gdscript_test(test_nullable_types tests/test_nullable_types.cpp)
+	add_gdscript_test(test_packed_regions tests/test_packed_regions.cpp)
+	add_gdscript_test(test_rewrite tests/test_rewrite.cpp)
 
 	# Differential testing: the same programs through the IR interpreter and
 	# through a real RISC-V machine. libriscv is already a dependency of the
