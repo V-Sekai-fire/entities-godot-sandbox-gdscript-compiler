@@ -363,3 +363,21 @@ TEST_CASE("control: a name that is neither a variable nor a method is still unde
 							"\t\tsig.connect(nothing)\n"),
 					CompilerException);
 }
+
+TEST_CASE("a member read before its declaration holds its type's default, as GDScript runs initializers in order") {
+	const IRProgram ir = compile_to_ir(
+			"var a: float = b\n"
+			"var b: float = 1.5\n"
+			"var c: int = d\n"
+			"var d: int = 7\n"
+			"func test_a() -> float:\n"
+			"\treturn a\n"
+			"func test_b() -> float:\n"
+			"\treturn b\n"
+			"func test_c() -> int:\n"
+			"\treturn c\n");
+	IRInterpreter interpreter(ir);
+	CHECK(std::get<double>(interpreter.call("test_a", {})) == 0.0);
+	CHECK(std::get<double>(interpreter.call("test_b", {})) == 1.5);
+	CHECK(std::get<int64_t>(interpreter.call("test_c", {})) == 0);
+}
