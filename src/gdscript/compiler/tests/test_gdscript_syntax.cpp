@@ -336,3 +336,40 @@ TEST_CASE("a lambda in a function body is lifted under its own label, after the 
 	}
 	CHECK(lifted == 2);
 }
+
+TEST_CASE("a float narrows to a typed int as GDScript does, toward zero") {
+	const IRProgram ir = compile_to_ir(
+			"func f(x: float) -> int:\n"
+			"\tvar margin: int = x * 2.0\n"
+			"\treturn margin\n");
+	IRInterpreter interpreter(ir);
+	CHECK(std::get<int64_t>(interpreter.call("f", { 1.9 })) == 3);
+	CHECK(std::get<int64_t>(interpreter.call("f", { -1.9 })) == -3);
+}
+
+TEST_CASE("a method of a nested class by bare name is a Callable bound to the instance") {
+	const IRProgram ir = compile_to_ir(
+			"class Inner:\n"
+			"\tvar n: int = 0\n"
+			"\tfunc go(sig: Signal):\n"
+			"\t\tsig.connect(init)\n"
+			"\tfunc init():\n"
+			"\t\tn += 1\n");
+	bool bound = false;
+	for (const IRFunction &func : ir.functions) {
+		for (const IRInstruction &instr : func.instructions) {
+			if (instr.opcode == IROpcode::MAKE_CALLABLE && ir.strings[instr.operands[1].string_id] == "@Inner.init") {
+				bound = true;
+			}
+		}
+	}
+	CHECK(bound);
+}
+
+TEST_CASE("control: a name that is neither a variable nor a method is still undefined") {
+	CHECK_THROWS_AS(compile_to_ir(
+							"class Inner:\n"
+							"\tfunc go(sig: Signal):\n"
+							"\t\tsig.connect(nothing)\n"),
+					CompilerException);
+}

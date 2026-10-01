@@ -4935,6 +4935,21 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		return gen_make_callable(expr->name, -1, func);
 	}
 
+	// A method of the enclosing class by bare name is a Callable bound to this instance, the
+	// way a lambda binds its captures; a static one binds nothing.
+	if (m_current_class != nullptr) {
+		const StructDecl* owner = nullptr;
+		if (const FunctionDecl* method = find_class_method(*m_current_class, expr->name, &owner)) {
+			Variable* self = find_variable(func, "self");
+			if (method->is_static) {
+				return gen_make_callable(lifted_method_name(*owner, expr->name), -1, func);
+			}
+			if (self != nullptr) {
+				return gen_make_callable(lifted_method_name(*owner, expr->name), self->register_num, func);
+			}
+		}
+	}
+
 	// A global class name is its Script resource.  Static methods and constants
 	// are properties of that resource; constructing an instance here would run
 	// _init() and, for a .sgd target, start an unnecessary Sandbox.
@@ -11310,8 +11325,10 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 	}
 
 	// INT->FLOAT, BOOL->INT/FLOAT: payload size mismatch without explicit convert.
+	// FLOAT->INT narrows as GDScript does, truncating toward zero; GDScript warns and goes on.
 	const bool widening = (declared == Variant::FLOAT && actual == Variant::INT) ||
-		(actual == Variant::BOOL && (declared == Variant::INT || declared == Variant::FLOAT));
+		(actual == Variant::BOOL && (declared == Variant::INT || declared == Variant::FLOAT)) ||
+		(declared == Variant::INT && actual == Variant::FLOAT);
 	if (widening) {
 		int converted = alloc_register(func);
 		IRInstruction convert(IROpcode::CONVERT, IRValue::reg(converted), IRValue::reg(reg),
