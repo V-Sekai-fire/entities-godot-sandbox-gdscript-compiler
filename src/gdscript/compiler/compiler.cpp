@@ -330,6 +330,7 @@ std::optional<IRProgram> Compiler::compile_text(const std::string& source, const
 		codegen.set_global_script_classes(options.global_script_classes);
 		codegen.set_engine_ancestry(options.engine_ancestry);
 		IRProgram ir_program = codegen.generate(program);
+		m_packed_notes = codegen.packed_notes();
 		m_signatures = ir_program.signatures;
 		m_signals = ir_program.signals;
 		m_rpc_configs = ir_program.rpc_configs;

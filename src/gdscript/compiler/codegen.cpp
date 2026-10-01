@@ -10,8 +10,6 @@
 #include <sstream>
 #include <cstring>
 #include <cmath>
-#include <cstdlib>
-#include <iostream>
 
 namespace gdscript {
 namespace {
@@ -4755,28 +4753,16 @@ bool CodeGenerator::try_packed_region(const Stmt* loop, FunctionContext& func) {
 	}
 	PackedScan scan = scan_packed_region(loop, func);
 	std::vector<FunctionContext::PackedCandidate> candidates = std::move(scan.candidates);
-	// GDSC_PACKED_DEBUG=1: say what each loop decided and why.
-	static const bool debug = [] {
-		const char* value = std::getenv("GDSC_PACKED_DEBUG");
-		return value != nullptr && value[0] != '\0' && value[0] != '0';
-	}();
-	if (debug) {
-		std::cerr << "packed region: " << m_current_function << " line " << loop->line << ":";
-		for (const auto& candidate : candidates) {
-			std::cerr << " " << candidate.name << (candidate.written ? "(w)" : "");
-		}
-		std::cerr << (candidates.empty() ? " no candidates" : "") << " accesses/pass "
-			<< scan.accesses_per_pass << std::endl;
-	}
 	if (candidates.empty()) {
 		return false;
 	}
+	const std::string where = m_current_function + " line " + std::to_string(loop->line) + ": ";
 
 	const FunctionContext entry = func;
 	while (!candidates.empty()) {
 		FunctionContext::PackedRegion region;
 		region.candidates = candidates;
-		for (auto& candidate : region.candidates) {
+		for (FunctionContext::PackedCandidate& candidate : region.candidates) {
 			candidate.token = func.next_packed_token++;
 		}
 		const size_t count = region.candidates.size();
@@ -4881,45 +4867,27 @@ bool CodeGenerator::try_packed_region(const Stmt* loop, FunctionContext& func) {
 					if (plain.count(reg) != 0) {
 						return PACKED_INERT_CONTAINER;
 					}
-					auto it = types.find(reg);
+					const std::unordered_map<int, IRInstruction::TypeHint>::const_iterator it = types.find(reg);
 					return it != types.end() ? it->second : IRInstruction::TypeHint_NONE;
 				});
 			effects.reads |= one.reads;
 			effects.writes |= one.writes;
-			if (debug && ((one.reads | one.writes) & PACKED_REACH_ALL) != 0) {
-				const IRInstruction& seen = func.ir.instructions[i];
-				std::cerr << "    reaches everything: " << seen.to_string(&m_strings) << " [";
-				for (const IRValue& operand : seen.operands) {
-					if (operand.type == IRValue::Type::REGISTER) {
-						auto it = types.find(operand.reg_index());
-						std::cerr << " r" << operand.reg_index() << ":"
-							<< (it != types.end() ? it->second : IRInstruction::TypeHint_NONE);
-					}
-				}
-				std::cerr << " ] line " << seen.line << std::endl;
-			}
 		}
-		for (const auto& candidate : region.candidates) {
+		for (const FunctionContext::PackedCandidate& candidate : region.candidates) {
 			const uint32_t own = packed_reach(candidate.type) | PACKED_REACH_ALL;
 			if ((effects.writes & own) != 0 || (candidate.written && (effects.reads & own) != 0)) {
 				dropped.insert(candidate.name);
 			}
 		}
 
-		if (debug) {
-			std::cerr << "  attempt:";
-			for (const auto& candidate : region.candidates) {
-				std::cerr << " " << candidate.name;
-			}
-			std::cerr << " -> reads " << std::hex << effects.reads << " writes " << effects.writes
-				<< std::dec << (dropped.empty() ? ", accepted" : ", dropping");
-			for (const auto& name : dropped) {
-				std::cerr << " " << name << (region.unsupported.count(name) ? "(access)" : "(observed)");
-			}
-			std::cerr << std::endl;
-		}
 		if (dropped.empty()) {
-			for (auto it = region.candidates.rbegin(); it != region.candidates.rend(); ++it) {
+			std::string note = where + "copies";
+			for (const FunctionContext::PackedCandidate& candidate : region.candidates) {
+				note += " " + candidate.name + (candidate.written ? " (written)" : "");
+			}
+			m_packed_notes.push_back(note);
+			for (std::vector<FunctionContext::PackedCandidate>::reverse_iterator it = region.candidates.rbegin();
+				it != region.candidates.rend(); ++it) {
 				emit_packed_release(*it, true, func);
 			}
 			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
@@ -4935,6 +4903,15 @@ bool CodeGenerator::try_packed_region(const Stmt* loop, FunctionContext& func) {
 			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 			return true;
 		}
+
+		std::vector<std::string> names(dropped.begin(), dropped.end());
+		std::sort(names.begin(), names.end());
+		std::string note = where + "drops";
+		for (const std::string& name : names) {
+			note += " " + name + (region.unsupported.count(name) ? " (an access the copy cannot make)"
+				: " (the host may reach it)");
+		}
+		m_packed_notes.push_back(note);
 
 		func = entry;
 		candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
