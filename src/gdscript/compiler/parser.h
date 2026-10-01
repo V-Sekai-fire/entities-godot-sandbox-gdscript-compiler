@@ -127,6 +127,9 @@ private:
 	const Token& previous() const;
 	bool is_at_end() const;
 	const Token& consume(TokenType type, const std::string& message);
+	// A member name after '.' or '?.': an identifier, or a keyword used as one, since
+	// GDScript lets a method be named `match`, `in` or any other keyword.
+	const Token& consume_member_name(const std::string& message);
 	void synchronize();
 	void error(const std::string& message);
 	// Reports at a position already consumed, rather than at peek().

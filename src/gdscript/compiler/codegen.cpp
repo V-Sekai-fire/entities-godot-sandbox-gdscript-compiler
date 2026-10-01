@@ -821,9 +821,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_members_in_scope = true;
 	ir_program.global_init = std::move(init_func.ir);
 	ir_program.member_init = std::move(member_func.ir);
-
-	m_pending_lambdas.clear();
-	m_next_lambda = 0;
+	// A lambda in a member initializer is queued like any other and lifted below. Clearing the
+	// queue here left `__init_members` calling a label nothing emitted.
 
 	struct NativeDefault {
 		FunctionDecl function;

@@ -1,6 +1,8 @@
 #include "parser.h"
 #include "compiler_exception.h"
 #include "globals.h"
+#include <algorithm>
+#include <cctype>
 #include <functional>
 #include <stdexcept>
 #include <sstream>
@@ -255,6 +257,10 @@ Program Parser::parse() {
 			// A bare string at file level is a block comment, as GDScript reads it.
 			advance();
 			consume_statement_end("Expected newline after the string");
+		} else if (check(TokenType::PASS)) {
+			// `pass` is a statement in a class body too, as GDScript reads it.
+			advance();
+			consume_statement_end("Expected newline after 'pass'");
 		} else {
 			error("Expected function or variable declaration");
 			synchronize();
@@ -2371,7 +2377,7 @@ ExprPtr Parser::parse_call() {
 
 	while (true) {
 		if (match(TokenType::QUESTION_DOT)) {
-			const Token& member = consume(TokenType::IDENTIFIER,
+			const Token& member = consume_member_name(
 				"Expected property or method name after '?.'");
 			std::vector<ExprPtr> arguments;
 			std::vector<std::string> names;
@@ -2408,7 +2414,7 @@ ExprPtr Parser::parse_call() {
 					std::move(arguments), true);
 			}
 		} else if (match(TokenType::DOT)) {
-			const Token& member = consume(TokenType::IDENTIFIER, "Expected property or method name after '.'");
+			const Token& member = consume_member_name("Expected property or method name after '.'");
 
 			if (match(TokenType::LPAREN)) {
 				std::vector<ExprPtr> arguments;
@@ -2691,6 +2697,18 @@ const Token& Parser::consume(TokenType type, const std::string& message) {
 
 	error(message + ", but found " + peek().describe());
 	return peek();
+}
+
+const Token& Parser::consume_member_name(const std::string& message) {
+	const Token& token = peek();
+	const bool keyword_shaped = !token.lexeme.empty() &&
+		(std::isalpha(static_cast<unsigned char>(token.lexeme[0])) || token.lexeme[0] == '_') &&
+		std::all_of(token.lexeme.begin(), token.lexeme.end(),
+			[](unsigned char c) { return std::isalnum(c) || c == '_'; });
+	if (token.type == TokenType::IDENTIFIER || keyword_shaped) {
+		return advance();
+	}
+	return consume(TokenType::IDENTIFIER, message);
 }
 
 void Parser::synchronize() {
