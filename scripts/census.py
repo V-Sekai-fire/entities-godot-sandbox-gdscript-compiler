@@ -55,6 +55,46 @@ def packed_loops(src):
         sites.append({'line': i + 1, 'func': func, 'accesses': accesses + (1 if iterates else 0)})
     return sites
 
+SYNTH = {'int', 'float', 'bool', 'String', 'StringName', 'Vector2', 'Vector3', 'Vector4', 'Color', 'Quaternion', 'Basis',
+         'Transform3D', 'Transform2D', 'Dictionary', 'Array', 'Variant', 'PackedByteArray', 'PackedInt32Array', 'PackedInt64Array',
+         'PackedFloat32Array', 'PackedFloat64Array', 'PackedStringArray', 'PackedVector2Array', 'PackedVector3Array',
+         'PackedVector4Array', 'PackedColorArray'}
+
+def timing_plan(rows, srcs, rel):
+    """What sgd_timing.gd can call: each packed-array loop's function, with its parameter types
+    when every one can be synthesized, or the reason it cannot. A static function needs no
+    instance; an instance method needs an _init without required arguments."""
+    by_rel = {r: p for p, r in rel.items()}
+    plan = []
+    for r in rows:
+        if not r['packed_loops'] or not r['ok']:
+            continue
+        src = srcs[by_rel[r['script']]]
+        init = re.search(r'func _init\(([^)]*)\)', src)
+        init_required = bool(init and any('=' not in x for x in init.group(1).split(',') if x.strip()))
+        funcs = {}
+        for site in r['packed_loops']:
+            m = re.match(r'(static\s+)?func\s+(\w+)\s*\(', site['func'])
+            if not m:
+                continue
+            name, static = m.group(2), bool(m.group(1))
+            i = src.find(f'func {name}(')
+            j = src.find(')', i)
+            params, reason = [], None
+            for p in [x.strip() for x in src[i + len(f'func {name}('):j].split(',') if x.strip()]:
+                pm = re.match(r'(\w+)\s*(?::\s*([\w\.\[\]]+))?', p)
+                ptype = (pm.group(2) or 'Variant').split('[')[0]
+                if ptype not in SYNTH:
+                    reason = f'parameter {pm.group(1)}: {ptype}'
+                    break
+                params.append(ptype)
+            if reason is None and init_required and not static:
+                reason = '_init needs arguments'
+            funcs[name] = {'static': static, 'params': params, 'skip': reason,
+                           'sites': [x for x in r['packed_loops'] if x['func'] == site['func']]}
+        plan.append({'script': r['script'], 'funcs': funcs})
+    return plan
+
 def owner_of(rel):
     parts = rel.split('/')
     return parts[1] if parts[0] == 'addons' and len(parts) > 1 else parts[0]
@@ -82,6 +122,7 @@ def self_test(compiler):
             'the autoload is read': s['autoloads'] == ['Probe'],
             'the exit code says a failure': r.returncode == 1,
             'the control ran': s['control_planted_error_failed'],
+            'the timing plan names the loop function': any(f['func'] == 'sum' for e in json.load(open(out / 'timing_plan.json')) for f in [dict(v, func=k) for k, v in e['funcs'].items()]),
         }
         for name, ok in checks.items():
             print(('PASS ' if ok else 'FAIL ') + name)
@@ -95,9 +136,10 @@ def main():
     ap.add_argument('--self-test', action='store_true')
     a = ap.parse_args()
     if a.self_test:
-        sys.exit(0 if self_test(a.compiler) else 1)
+        sys.exit(0 if self_test(os.path.abspath(a.compiler)) else 1)
     if not a.project or not a.out:
         ap.error('--project and --out are required without --self-test')
+    a.compiler = os.path.abspath(a.compiler)
     project = os.path.abspath(a.project); out = os.path.abspath(a.out); os.makedirs(out, exist_ok=True)
     files = scripts_of(project)
     srcs = {p: p.read_text(errors='replace') for p in files}
@@ -182,6 +224,7 @@ def main():
                'elf_bytes_total': sum(r['elf_bytes'] or 0 for r in rows), 'control_planted_error_failed': control_failed,
                'autoloads': autoloads, 'global_classes': len(classes)}
     json.dump({'summary': summary, 'rows': rows}, open(os.path.join(out, 'census.json'), 'w'), indent=1)
+    json.dump(timing_plan(rows, srcs, rel), open(os.path.join(out, 'timing_plan.json'), 'w'), indent=1)
     print(json.dumps(summary, indent=1))
     by_owner = {}
     for r in rows:
