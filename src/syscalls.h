@@ -154,13 +154,16 @@
 // descriptor) writes the copy back into the SAME host array (in place, so every
 // Variant sharing it sees the writes) when the guest wrote it (PACKED_WRITTEN, or
 // the descriptor's dirty word), and frees the copy either way.
-#define ECALL_PACKED_ACQUIRE (GAME_API_BASE + 67)
-#define ECALL_PACKED_RELEASE (GAME_API_BASE + 68)
+#define ECALL_PACKED_ACQUIRE (GAME_API_BASE + 68)
+#define ECALL_PACKED_RELEASE (GAME_API_BASE + 69)
 // Or'ed into the type argument of both: the guest writes the copy, so its
 // release stores it back whether or not the dirty word was set.
 #define PACKED_WRITTEN 0x100
 
-#define ECALL_LAST (GAME_API_BASE + 69)
+// Raw elements of a typed or packed array (godot-sandbox; this compiler does not emit it)
+#define ECALL_ARRAY_WINDOW (GAME_API_BASE + 67)
+
+#define ECALL_LAST (GAME_API_BASE + 70)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
