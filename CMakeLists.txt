@@ -15,11 +15,11 @@ if (BUILD_TESTING)
 endif()
 
 # doctest and witness-cpp are the test suite's two dependencies, both header
-# only, both submodules. They are declared here rather than inside the
+# only, both subtrees. They are declared here rather than inside the
 # compiler's own list file so that file stays upstream's.
 if (BUILD_TESTING)
 	if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ext/doctest/doctest/doctest.h)
-		message(FATAL_ERROR "ext/doctest is missing: git submodule update --init")
+		message(FATAL_ERROR "ext/doctest is missing: it is a subtree, restore it from git")
 	endif()
 	# doctest is a single header. Its own list file is not used: v2.4.11 asks
 	# for a CMake policy version that CMake 4 no longer accepts, and an
