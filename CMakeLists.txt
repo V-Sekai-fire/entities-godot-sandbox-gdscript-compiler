@@ -15,7 +15,7 @@ if (BUILD_TESTING)
 endif()
 
 # doctest and witness-cpp are the test suite's two dependencies, both header
-# only, both submodules. They are declared here rather than inside the
+# only, both subtrees. They are declared here rather than inside the
 # compiler's own list file so that file stays upstream's.
 if (BUILD_TESTING)
 	if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ext/doctest/doctest/doctest.h)

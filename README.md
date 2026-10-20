@@ -12,7 +12,7 @@ track, the local patches and how to re-sync.
 ## Build and test
 
 ```sh
-git clone --recurse-submodules https://github.com/V-Sekai-fire/entities-godot-sandbox-gdscript-compiler
+git clone https://github.com/V-Sekai-fire/entities-godot-sandbox-gdscript-compiler
 cd entities-godot-sandbox-gdscript-compiler
 pixi run test
 ```
